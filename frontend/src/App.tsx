@@ -98,6 +98,15 @@ function EventList() {
     load()
   }, [])
 
+  useEffect(() => {
+    if (!showAdd) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowAdd(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showAdd])
+
   async function submitAdd(e: FormEvent) {
     e.preventDefault()
     setAddErr(null)
@@ -136,7 +145,7 @@ function EventList() {
         </button>
       </div>
       {showAdd && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/30 p-4 backdrop-blur-sm dark:bg-black/25">
           <LiquidGlassPanel className="max-h-[90vh] w-full max-w-md overflow-y-auto">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold">새 공연</h3>
@@ -145,7 +154,7 @@ function EventList() {
                 className="text-sm text-neutral-500"
                 onClick={() => setShowAdd(false)}
               >
-                닫기
+                나가기
               </button>
             </div>
             <form className="flex flex-col gap-3 text-left" onSubmit={submitAdd}>
@@ -200,12 +209,21 @@ function EventList() {
                 onChange={(e) => setForm((f) => ({ ...f, grade: e.target.value }))}
               />
               {addErr && <p className="text-sm text-red-500">{addErr}</p>}
-              <button
-                type="submit"
-                className="mt-2 rounded-2xl bg-[#007AFF] py-3 font-medium text-white"
-              >
-                등록
-              </button>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  className="flex-1 rounded-2xl border border-white/30 bg-white/20 py-3 font-medium text-neutral-700 backdrop-blur dark:text-white"
+                  onClick={() => setShowAdd(false)}
+                >
+                  나가기
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 rounded-2xl bg-[#007AFF] py-3 font-medium text-white"
+                >
+                  등록
+                </button>
+              </div>
             </form>
           </LiquidGlassPanel>
         </div>
@@ -303,7 +321,6 @@ function EventDetail() {
     try {
       const r = await api.joinQueue(eventId)
       setQueueText(`대기 중 · 순번 약 ${r.position} / ${r.totalWaiting}명`)
-      setAdmissionToken(r.admissionToken)
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'queue error')
     }

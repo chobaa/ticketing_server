@@ -54,8 +54,6 @@ export const api = {
     req<{
       position: number
       totalWaiting: number
-      admissionToken: string
-      tokenExpiresInSeconds: number
     }>(`/api/events/${eventId}/queue`, { method: 'POST' }),
   queueMe: (eventId: number) =>
     req<{ inQueue: boolean; position: number; totalWaiting: number }>(

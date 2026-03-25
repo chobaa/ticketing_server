@@ -46,8 +46,7 @@ public class QueueService {
         int position = rank != null ? rank + 1 : z.size();
         reservationEventProducer.publishQueueEnter(
                 new QueueEnterEvent(eventId, userId, Instant.now()));
-        String admissionToken = issueAdmissionToken(eventId, userId);
-        return new JoinQueueResult(position, z.size(), admissionToken, tokenTtlSeconds);
+        return new JoinQueueResult(position, z.size());
     }
 
     public QueueStatus getStatus(long eventId, long userId) {
@@ -91,8 +90,7 @@ public class QueueService {
         return redissonClient.getScoredSortedSet(queueKey(eventId)).size();
     }
 
-    public record JoinQueueResult(
-            int position, int totalWaiting, String admissionToken, int tokenExpiresInSeconds) {}
+    public record JoinQueueResult(int position, int totalWaiting) {}
 
     public record QueueStatus(boolean inQueue, int position, int totalWaiting) {}
 }

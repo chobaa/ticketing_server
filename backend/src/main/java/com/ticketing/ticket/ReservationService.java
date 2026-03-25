@@ -38,7 +38,7 @@ public class ReservationService {
         String lockName = "lock:seat:" + eventId + ":" + seatId;
         RLock lock = redissonClient.getLock(lockName);
         try {
-            if (!lock.tryLock(0, 3, TimeUnit.SECONDS)) {
+            if (!lock.tryLock(0, TimeUnit.SECONDS)) {
                 throw new IllegalStateException("Could not acquire seat lock");
             }
             Seat seat =

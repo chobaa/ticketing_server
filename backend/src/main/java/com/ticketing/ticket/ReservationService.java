@@ -1,10 +1,13 @@
 package com.ticketing.ticket;
 
+import com.ticketing.api.dto.ReservationPaymentProgressResponse;
 import com.ticketing.event.Seat;
 import com.ticketing.event.SeatRepository;
 import com.ticketing.event.SeatViewCacheService;
 import com.ticketing.messaging.ReservationEventProducer;
 import com.ticketing.messaging.dto.TicketReservedEvent;
+import com.ticketing.payment.Payment;
+import com.ticketing.payment.PaymentRepository;
 import lombok.RequiredArgsConstructor;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
@@ -26,6 +29,7 @@ public class ReservationService {
     private final QueueService queueService;
     private final ReservationEventProducer reservationEventProducer;
     private final SeatViewCacheService seatViewCacheService;
+    private final PaymentRepository paymentRepository;
 
     @Value("${ticketing.reservation.hold-ttl-minutes}")
     private int holdTtlMinutes;
@@ -85,5 +89,27 @@ public class ReservationService {
                 lock.unlock();
             }
         }
+    }
+
+    @Transactional(readOnly = true)
+    public ReservationPaymentProgressResponse getProgress(long userId, long eventId, long reservationId) {
+        Reservation reservation =
+                reservationRepository
+                        .findByIdAndUserIdAndEventId(reservationId, userId, eventId)
+                        .orElseThrow(() -> new IllegalArgumentException("Reservation not found"));
+        Payment payment = paymentRepository.findByReservationId(reservationId).orElse(null);
+        boolean paymentTerminal =
+                payment != null
+                        && ("SUCCESS".equalsIgnoreCase(payment.getStatus())
+                                || "FAILED".equalsIgnoreCase(payment.getStatus()));
+        return new ReservationPaymentProgressResponse(
+                reservation.getId(),
+                reservation.getStatus(),
+                reservation.getReservedAt(),
+                payment == null ? null : payment.getStatus(),
+                payment == null ? null : payment.getCreatedAt(),
+                paymentTerminal ? payment.getUpdatedAt() : null,
+                payment == null ? null : payment.getFailureCode(),
+                payment == null ? null : payment.getFailureMessage());
     }
 }

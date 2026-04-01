@@ -1,6 +1,7 @@
 package com.ticketing.api;
 
 import com.ticketing.api.dto.ReserveRequest;
+import com.ticketing.api.dto.ReservationPaymentProgressResponse;
 import com.ticketing.ticket.QueueService;
 import com.ticketing.ticket.Reservation;
 import com.ticketing.ticket.ReservationService;
@@ -48,5 +49,13 @@ public class TicketController {
         Reservation r =
                 reservationService.reserve(userId, eventId, body.seatId(), body.admissionToken());
         return ResponseEntity.ok(r);
+    }
+
+    @GetMapping("/reservations/{reservationId}/progress")
+    public ResponseEntity<ReservationPaymentProgressResponse> reservationProgress(
+            @PathVariable Long eventId,
+            @PathVariable Long reservationId,
+            @AuthenticationPrincipal Long userId) {
+        return ResponseEntity.ok(reservationService.getProgress(userId, eventId, reservationId));
     }
 }

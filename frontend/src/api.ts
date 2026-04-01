@@ -76,6 +76,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ seatId, admissionToken }),
     }),
+  reservationProgress: (eventId: number, reservationId: number) =>
+    req<ReservationPaymentProgressDto>(`/api/events/${eventId}/reservations/${reservationId}/progress`),
 }
 
 export interface CreateEventBody {
@@ -110,4 +112,15 @@ export interface ReservationDto {
   eventId: number
   seatId: number
   status: string
+}
+
+export interface ReservationPaymentProgressDto {
+  reservationId: number
+  reservationStatus: string
+  reservedAt: string
+  paymentStatus: string | null
+  paymentStartedAt: string | null
+  paymentFinishedAt: string | null
+  failureCode: string | null
+  failureMessage: string | null
 }

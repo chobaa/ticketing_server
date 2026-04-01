@@ -1,0 +1,21 @@
+CREATE TABLE payments (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    reservation_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    order_id VARCHAR(64) NOT NULL,
+    payment_key VARCHAR(255) NULL,
+    provider VARCHAR(32) NOT NULL,
+    amount DECIMAL(12, 2) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    method VARCHAR(64) NULL,
+    failure_code VARCHAR(64) NULL,
+    failure_message VARCHAR(500) NULL,
+    approved_at TIMESTAMP NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_payment_reservation FOREIGN KEY (reservation_id) REFERENCES reservations (id),
+    UNIQUE KEY uq_payment_reservation (reservation_id),
+    UNIQUE KEY uq_payment_order (order_id),
+    INDEX idx_payment_user (user_id),
+    INDEX idx_payment_status (status)
+);

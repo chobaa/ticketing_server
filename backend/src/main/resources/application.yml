@@ -21,7 +21,7 @@ spring:
     open-in-view: false
     properties:
       hibernate:
-        format_sql: true
+        "[format_sql]": true
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -54,21 +54,23 @@ management:
     health:
       show-details: when_authorized
   metrics:
-    web:
-      server:
-        request:
-          autotime:
-            enabled: true
     distribution:
       percentiles-histogram:
-        http.server.requests: true
+        "[http.server.requests]": true
       percentiles:
-        http.server.requests: 0.5, 0.95, 0.99
+        "[http.server.requests]": 0.5, 0.95, 0.99
 
 ticketing:
   jwt:
     secret: ${JWT_SECRET:change-me-in-production-use-long-random-string-at-least-256-bits}
     expiration-ms: 86400000
+  payment:
+    worker:
+      concurrency: ${PAYMENT_WORKER_CONCURRENCY:8}
+    simulation:
+      min-delay-ms: ${PAYMENT_SIM_MIN_DELAY_MS:2000}
+      max-delay-ms: ${PAYMENT_SIM_MAX_DELAY_MS:10000}
+      success-rate: ${PAYMENT_SIM_SUCCESS_RATE:0.72}
   queue:
     admission-batch-size: 50
     admission-interval-ms: 1000

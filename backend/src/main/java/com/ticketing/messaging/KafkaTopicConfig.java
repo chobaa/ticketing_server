@@ -22,4 +22,19 @@ public class KafkaTopicConfig {
     public NewTopic queueEnter() {
         return TopicBuilder.name(KafkaTopics.QUEUE_ENTER).partitions(3).replicas(1).build();
     }
+
+    @Bean
+    public NewTopic paymentRequested() {
+        return TopicBuilder.name(KafkaTopics.PAYMENT_REQUESTED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic paymentSucceeded() {
+        return TopicBuilder.name(KafkaTopics.PAYMENT_SUCCEEDED).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic paymentFailed() {
+        return TopicBuilder.name(KafkaTopics.PAYMENT_FAILED).partitions(3).replicas(1).build();
+    }
 }

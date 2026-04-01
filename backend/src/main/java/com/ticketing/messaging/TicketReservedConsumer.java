@@ -22,7 +22,6 @@ public class TicketReservedConsumer {
     public void onTicketReserved(String payload) {
         try {
             TicketReservedEvent event = objectMapper.readValue(payload, TicketReservedEvent.class);
-            rabbitTemplate.convertAndSend("", RabbitConfig.PAYMENT_QUEUE, event);
             rabbitTemplate.convertAndSend(
                     "",
                     RabbitConfig.NOTIFICATION_QUEUE,
@@ -33,7 +32,7 @@ public class TicketReservedConsumer {
                             event.reservationId(),
                             "userId",
                             event.userId()));
-            log.debug("Routed reservation {} to RabbitMQ queues", event.reservationId());
+            log.debug("Routed reservation {} to notification queue", event.reservationId());
         } catch (Exception e) {
             log.error("Failed to process ticket-reserved: {}", e.getMessage(), e);
         }

@@ -1,6 +1,14 @@
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
-import { api, getToken, setToken, type CreateEventBody, type EventDto, type SeatDto } from './api'
+import {
+  api,
+  getToken,
+  setToken,
+  type CreateEventBody,
+  type EventDto,
+  type ReservationPaymentProgressDto,
+  type SeatDto,
+} from './api'
 import { LiquidGlassPanel } from './components/LiquidGlassPanel'
 import { TrafficAnalyticsDashboard } from './components/TrafficAnalyticsDashboard'
 
@@ -250,12 +258,26 @@ function EventList() {
 
 function EventDetail() {
   const { id } = useParams<{ id: string }>()
+  const nav = useNavigate()
   const eventId = Number(id)
   const [seats, setSeats] = useState<SeatDto[]>([])
   const [queueText, setQueueText] = useState('대기열에 없음 — 「대기열 진입」을 눌러 주세요.')
   const [admissionToken, setAdmissionToken] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [paymentStep, setPaymentStep] = useState(false)
+  const [reservationId, setReservationId] = useState<number | null>(null)
+  const [progress, setProgress] = useState<ReservationPaymentProgressDto | null>(null)
+  const [progressNow, setProgressNow] = useState(Date.now())
+  const [finalizedAtMs, setFinalizedAtMs] = useState<number | null>(null)
+  const detailContentRef = useRef<HTMLDivElement | null>(null)
+
+  function progressStageRank(p: ReservationPaymentProgressDto | null): number {
+    if (!p) return 0
+    if (p.reservationStatus === 'CONFIRMED' || p.reservationStatus === 'CANCELED') return 4
+    if (p.paymentFinishedAt) return 3
+    if (p.paymentStartedAt) return 2
+    return 1
+  }
 
   useEffect(() => {
     if (admissionToken) {
@@ -318,6 +340,9 @@ function EventDetail() {
   async function join() {
     setMsg(null)
     setPaymentStep(false)
+    setReservationId(null)
+    setProgress(null)
+    setFinalizedAtMs(null)
     try {
       const r = await api.joinQueue(eventId)
       setQueueText(`대기 중 · 순번 약 ${r.position} / ${r.totalWaiting}명`)
@@ -335,18 +360,101 @@ function EventDetail() {
     try {
       const r = await api.reserve(eventId, seatId, admissionToken)
       setMsg(`예약 생성됨 · reservation #${r.id} (${r.status})`)
+      setReservationId(r.id)
+      setProgressNow(Date.now())
+      setProgress(null)
+      setFinalizedAtMs(null)
       setPaymentStep(true)
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'reserve error')
     }
   }
 
+  useEffect(() => {
+    if (!paymentStep || !reservationId) return
+    const handle = window.setInterval(() => setProgressNow(Date.now()), 1000)
+    return () => clearInterval(handle)
+  }, [paymentStep, reservationId])
+
+  useEffect(() => {
+    if (!paymentStep || !reservationId) return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const p = await api.reservationProgress(eventId, reservationId)
+        if (cancelled) return
+        setProgress((prev) => (progressStageRank(p) >= progressStageRank(prev) ? p : prev))
+        if (p.reservationStatus === 'CONFIRMED') {
+          setMsg(`결제 완료 · reservation #${reservationId} (CONFIRMED)`)
+        } else if (p.reservationStatus === 'CANCELED') {
+          const reason = p.failureMessage ? ` (${p.failureMessage})` : ''
+          setMsg(`결제 실패 · reservation #${reservationId} (CANCELED)${reason}`)
+        }
+      } catch {
+        // ignore polling error
+      }
+    }
+    load()
+    const handle = window.setInterval(load, 1000)
+    return () => {
+      cancelled = true
+      clearInterval(handle)
+    }
+  }, [eventId, paymentStep, reservationId])
+
+  const reservedMs = progress?.reservedAt ? Date.parse(progress.reservedAt) : null
+  const paymentStartedMs = progress?.paymentStartedAt ? Date.parse(progress.paymentStartedAt) : null
+  const paymentFinishedMs = progress?.paymentFinishedAt ? Date.parse(progress.paymentFinishedAt) : null
+  const paymentSucceeded = progress?.reservationStatus === 'CONFIRMED'
+  const paymentFailed = progress?.reservationStatus === 'CANCELED'
+  const paymentOutcome = paymentSucceeded ? 'SUCCESS' : paymentFailed ? 'FAILED' : 'PENDING'
+  const canReturnHomeByBackgroundClick = paymentOutcome !== 'PENDING'
+
+  useEffect(() => {
+    if (paymentOutcome !== 'PENDING' && finalizedAtMs == null) {
+      setFinalizedAtMs(Date.now())
+    }
+  }, [paymentOutcome, finalizedAtMs])
+
+  useEffect(() => {
+    if (!canReturnHomeByBackgroundClick) return
+    const onWindowMouseDown = (ev: MouseEvent) => {
+      if (ev.button !== 0) return
+      const target = ev.target as HTMLElement | null
+      if (!target) return
+      if (target.closest('a,button,input,select,textarea,[role="button"]')) return
+      if (detailContentRef.current?.contains(target)) return
+      nav('/')
+    }
+    window.addEventListener('mousedown', onWindowMouseDown)
+    return () => window.removeEventListener('mousedown', onWindowMouseDown)
+  }, [canReturnHomeByBackgroundClick, nav])
+
+  function goHomeOnLeftBackgroundClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (!canReturnHomeByBackgroundClick) return
+    if (e.target !== e.currentTarget) return
+    nav('/')
+  }
+
+  const stopAtMs = paymentOutcome === 'PENDING' ? progressNow : finalizedAtMs ?? progressNow
+  const totalElapsedSec =
+    reservedMs == null ? 0 : Math.max(0, Math.floor((stopAtMs - reservedMs) / 1000))
+  const queueElapsedSec =
+    reservedMs == null ? 0 : Math.max(0, Math.floor(((paymentStartedMs ?? stopAtMs) - reservedMs) / 1000))
+  const processingElapsedSec =
+    paymentStartedMs == null
+      ? 0
+      : Math.max(0, Math.floor(((paymentFinishedMs ?? stopAtMs) - paymentStartedMs) / 1000))
+  const settlementElapsedSec =
+    paymentFinishedMs == null ? 0 : Math.max(0, Math.floor((stopAtMs - paymentFinishedMs) / 1000))
+
   return (
-    <div className="mx-auto w-full max-w-2xl px-4 py-8">
-      <Link to="/events" className="mb-4 inline-block text-sm text-[#007AFF]">
-        ← 목록
-      </Link>
-      <LiquidGlassPanel className="mb-6">
+    <div className="w-full min-h-screen px-4 py-8" onClick={goHomeOnLeftBackgroundClick}>
+      <div ref={detailContentRef} className="mx-auto w-full max-w-2xl">
+        <Link to="/events" className="mb-4 inline-block text-sm text-[#007AFF]">
+          ← 목록
+        </Link>
+        <LiquidGlassPanel className="mb-6">
         <div className="text-lg font-semibold">예매</div>
         <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">{queueText}</p>
         <p className="mt-1 text-xs text-neutral-500">
@@ -359,40 +467,100 @@ function EventDetail() {
         >
           대기열 진입
         </button>
-      </LiquidGlassPanel>
-      {msg && <p className="mb-4 text-center text-sm text-neutral-700 dark:text-neutral-200">{msg}</p>}
-      {paymentStep && (
-        <LiquidGlassPanel className="mb-6 border-emerald-400/30">
-          <div className="text-base font-semibold text-emerald-800 dark:text-emerald-200">결제 단계</div>
-          <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-            예약이 확보되었습니다. 아래에서 결제를 진행해 주세요. (좌석 자동 새로고침은 결제 화면 진입 전까지만
-            동작합니다.)
-          </p>
         </LiquidGlassPanel>
-      )}
-      {admissionToken && !paymentStep && (
-        <p className="mb-3 text-center text-xs text-neutral-500">
-          다른 사용자와 좌석이 겹치지 않도록 좌석 상태를 1초마다 갱신합니다.
-        </p>
-      )}
-      {admissionToken ? (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {seats.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              disabled={s.status !== 'AVAILABLE' || paymentStep}
-              onClick={() => reserve(s.id)}
-              className="rounded-2xl border border-white/20 bg-white/10 px-2 py-3 text-sm backdrop-blur disabled:opacity-40"
-            >
-              {s.seatNumber}
-              <div className="text-xs text-neutral-500">{s.status}</div>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <p className="text-center text-sm text-neutral-500">입장 토큰 발급 후 좌석표가 표시됩니다.</p>
-      )}
+        {msg && <p className="mb-4 text-center text-sm text-neutral-700 dark:text-neutral-200">{msg}</p>}
+        {paymentStep && (
+          <LiquidGlassPanel className="mb-6 border-emerald-400/30">
+            <div className="text-base font-semibold text-emerald-800 dark:text-emerald-200">결제 단계</div>
+            <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+              결제 파이프라인 진행 상태를 추적 중입니다.
+            </p>
+            {paymentOutcome !== 'PENDING' && (
+              <div
+                className={`mt-3 rounded-xl border px-3 py-2 text-sm font-medium ${
+                  paymentOutcome === 'SUCCESS'
+                    ? 'border-emerald-400/40 bg-emerald-100/60 text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-100'
+                    : 'border-red-400/40 bg-red-100/60 text-red-900 dark:bg-red-900/30 dark:text-red-100'
+                }`}
+              >
+                {paymentOutcome === 'SUCCESS'
+                  ? `예매가 성공적으로 완료되었습니다. (reservation #${reservationId})`
+                  : `예매 결제에 실패했습니다. (reservation #${reservationId})`}
+                {paymentOutcome === 'FAILED' && progress?.failureMessage
+                  ? ` 사유: ${progress.failureMessage}`
+                  : ''}
+                <div className="mt-1 text-xs opacity-80">
+                  안내: 좌측/우측 빈 화면을 좌클릭하면 홈 화면으로 돌아갑니다.
+                </div>
+              </div>
+            )}
+            <div className="mt-3 rounded-xl border border-white/30 bg-white/25 p-3 text-sm dark:bg-black/20">
+            <div className="mb-2 font-medium text-neutral-800 dark:text-neutral-100">
+              reservation #{reservationId ?? '-'}
+              {paymentOutcome === 'PENDING'
+                ? ` · 현재 단계 진행 ${paymentStartedMs == null ? queueElapsedSec : paymentFinishedMs == null ? processingElapsedSec : settlementElapsedSec}초`
+                : ` · 총 ${totalElapsedSec}초`}
+            </div>
+            <div className="space-y-1.5 text-neutral-700 dark:text-neutral-200">
+              <div>
+                1) 예약 확정(HELD): {reservedMs ? '완료' : '대기'} {reservedMs ? '(0초)' : ''}
+              </div>
+              <div>
+                2) 결제 워커 큐 대기:{' '}
+                {paymentStartedMs == null ? `진행중 (${queueElapsedSec}초)` : `완료 (${queueElapsedSec}초)`}
+              </div>
+              <div>
+                3) 결제 시뮬레이션 처리:{' '}
+                {paymentStartedMs == null
+                  ? '대기 (0초)'
+                  : paymentFinishedMs == null
+                    ? `진행중 (${processingElapsedSec}초)`
+                    : `완료 (${processingElapsedSec}초)`}
+              </div>
+              <div>
+                4) 결과 반영:{' '}
+                {paymentFinishedMs == null
+                  ? '대기 (0초)'
+                  : paymentOutcome === 'PENDING'
+                    ? `진행중 (${settlementElapsedSec}초)`
+                    : paymentSucceeded
+                      ? `성공 반영 완료 (${settlementElapsedSec}초)`
+                      : `실패 롤백 완료 (${settlementElapsedSec}초)`}
+              </div>
+            </div>
+            {progress?.paymentStatus && (
+              <div className="mt-3 text-xs text-neutral-600 dark:text-neutral-300">
+                paymentStatus={progress.paymentStatus}
+                {progress.failureCode ? ` · failureCode=${progress.failureCode}` : ''}
+              </div>
+            )}
+            </div>
+          </LiquidGlassPanel>
+        )}
+        {admissionToken && !paymentStep && (
+          <p className="mb-3 text-center text-xs text-neutral-500">
+            다른 사용자와 좌석이 겹치지 않도록 좌석 상태를 1초마다 갱신합니다.
+          </p>
+        )}
+        {admissionToken ? (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {seats.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                disabled={s.status !== 'AVAILABLE' || paymentStep}
+                onClick={() => reserve(s.id)}
+                className="rounded-2xl border border-white/20 bg-white/10 px-2 py-3 text-sm backdrop-blur disabled:opacity-40"
+              >
+                {s.seatNumber}
+                <div className="text-xs text-neutral-500">{s.status}</div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-center text-sm text-neutral-500">입장 토큰 발급 후 좌석표가 표시됩니다.</p>
+        )}
+      </div>
     </div>
   )
 }

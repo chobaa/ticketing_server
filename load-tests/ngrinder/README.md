@@ -29,3 +29,24 @@ Groovy 스크립트에서 다음 순서를 권장합니다.
 ## 결과 확인
 
 컨트롤러 UI에서 **TPS**, **Mean Test time**, **에러율** 차트와 **로그 탭**의 스택 트레이스를 확인합니다. 같은 시점에 Prometheus(`http://localhost:9090`)의 `http_server_requests`와 앱 대시보드(WebSocket)를 비교하면 서버·클라이언트 관점을 나눌 수 있습니다.
+
+## 포함된 nGrinder 스크립트
+아래 4개 스크립트는 각각 별도 테스트로 실행되며, nGrinder 대시보드에서 시나리오별로 구분해서 볼 수 있습니다.
+
+- `load-tests/ngrinder/scripts/01_comprehensive.groovy`: 종합 흐름(큐 입장 → admission 토큰 폴링 → 예약) 검증
+- `load-tests/ngrinder/scripts/02_concurrency.groovy`: 동시성(모두 동일 좌석 예약 시도, 성공 1건 기대)
+- `load-tests/ngrinder/scripts/03_load.groovy`: 부하(토큰 1회 획득 후 동일 스레드에서 반복 예약 요청)
+- `load-tests/ngrinder/scripts/04_data_integrity.groovy`: 데이터 정합성(예약 성공 좌석 수 vs 좌석 `HELD` 상태 수 비교)
+
+## 스크립트 파라미터(Controller에 설정)
+필요 시 nGrinder 컨트롤러의 “Script Parameters”에 아래 값을 넣어 실행합니다.
+
+- `baseUrl`: 대상 서버 URL (기본값: `http://localhost:8080`)
+- `adminEmail`, `adminPassword`: 관리자 계정 (기본값: admin_자동생성 + `password123456`)
+- `userPassword`: 테스트용 사용자 비밀번호 (기본값: `password123456`)
+- `eventSeatCount`: 이벤트 좌석 수 (기본값: comprehensive=20, concurrency=1, load=200, dataIntegrity=5)
+- `seatPrice`: 좌석 가격 (기본값: `100.00`)
+- `seatGrade`: 좌석 grade (기본값: `R`)
+- `admissionPollIntervalMs`: admission 폴링 간격 (기본값: `200`)
+- `admissionMaxWaitSec`: admission 폴링 최대 대기 (기본값: 15~30)
+- `testDurationSec`: load 시나리오 실행 시간 (기본값: `30`)

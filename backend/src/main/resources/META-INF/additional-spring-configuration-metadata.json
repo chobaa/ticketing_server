@@ -1,0 +1,66 @@
+{
+  "groups": [
+    {
+      "name": "ticketing.jwt",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "ticketing.queue",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "ticketing.reservation",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "ticketing.payment.simulation",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "ticketing.payment.worker",
+      "type": "java.lang.Object"
+    }
+  ],
+  "properties": [
+    {
+      "name": "ticketing.jwt.secret",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "ticketing.jwt.expiration-ms",
+      "type": "java.lang.Long"
+    },
+    {
+      "name": "ticketing.queue.admission-batch-size",
+      "type": "java.lang.Integer"
+    },
+    {
+      "name": "ticketing.queue.admission-interval-ms",
+      "type": "java.lang.Long"
+    },
+    {
+      "name": "ticketing.queue.token-ttl-seconds",
+      "type": "java.lang.Long"
+    },
+    {
+      "name": "ticketing.reservation.hold-ttl-minutes",
+      "type": "java.lang.Integer"
+    },
+    {
+      "name": "ticketing.payment.simulation.min-delay-ms",
+      "type": "java.lang.Long"
+    },
+    {
+      "name": "ticketing.payment.simulation.max-delay-ms",
+      "type": "java.lang.Long"
+    },
+    {
+      "name": "ticketing.payment.simulation.success-rate",
+      "type": "java.lang.Double"
+    },
+    {
+      "name": "ticketing.payment.worker.concurrency",
+      "type": "java.lang.Integer"
+    }
+  ]
+}

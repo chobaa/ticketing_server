@@ -16,10 +16,146 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
+  # Redis Cluster (6 nodes + init). Use SPRING_PROFILES_ACTIVE=redis-cluster on backend.
+  redis-node-1:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    command:
+      [
+        "redis-server",
+        "--port",
+        "7000",
+        "--cluster-enabled",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+        "--appendonly",
+        "yes",
+        "--protected-mode",
+        "no",
+      ]
+    ports: ["7000:7000"]
+
+  redis-node-2:
+    image: redis:7-alpine
+    command:
+      [
+        "redis-server",
+        "--port",
+        "7001",
+        "--cluster-enabled",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+        "--appendonly",
+        "yes",
+        "--protected-mode",
+        "no",
+      ]
+    ports: ["7001:7001"]
+
+  redis-node-3:
+    image: redis:7-alpine
+    command:
+      [
+        "redis-server",
+        "--port",
+        "7002",
+        "--cluster-enabled",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+        "--appendonly",
+        "yes",
+        "--protected-mode",
+        "no",
+      ]
+    ports: ["7002:7002"]
+
+  redis-node-4:
+    image: redis:7-alpine
+    command:
+      [
+        "redis-server",
+        "--port",
+        "7003",
+        "--cluster-enabled",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+        "--appendonly",
+        "yes",
+        "--protected-mode",
+        "no",
+      ]
+    ports: ["7003:7003"]
+
+  redis-node-5:
+    image: redis:7-alpine
+    command:
+      [
+        "redis-server",
+        "--port",
+        "7004",
+        "--cluster-enabled",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+        "--appendonly",
+        "yes",
+        "--protected-mode",
+        "no",
+      ]
+    ports: ["7004:7004"]
+
+  redis-node-6:
+    image: redis:7-alpine
+    command:
+      [
+        "redis-server",
+        "--port",
+        "7005",
+        "--cluster-enabled",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+        "--appendonly",
+        "yes",
+        "--protected-mode",
+        "no",
+      ]
+    ports: ["7005:7005"]
+
+  redis-cluster-init:
+    image: redis:7-alpine
+    depends_on:
+      - redis-node-1
+      - redis-node-2
+      - redis-node-3
+      - redis-node-4
+      - redis-node-5
+      - redis-node-6
+    entrypoint: ["/bin/sh", "-lc"]
+    command:
+      - >
+        sleep 2;
+        echo 'creating redis cluster (idempotent)...';
+        redis-cli --cluster create
+          redis-node-1:7000 redis-node-2:7001 redis-node-3:7002
+          redis-node-4:7003 redis-node-5:7004 redis-node-6:7005
+          --cluster-replicas 1 --cluster-yes || true;
+    restart: "no"
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -58,7 +194,17 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      redis:
+      redis-node-1:
+        condition: service_started
+      redis-node-2:
+        condition: service_started
+      redis-node-3:
+        condition: service_started
+      redis-node-4:
+        condition: service_started
+      redis-node-5:
+        condition: service_started
+      redis-node-6:
         condition: service_started
       kafka:
         condition: service_started
@@ -70,13 +216,15 @@ services:
       MYSQL_DATABASE: ticketing
       MYSQL_USER: ticketing
       MYSQL_PASSWORD: ticketing
-      REDIS_HOST: redis
+      SPRING_PROFILES_ACTIVE: redis-cluster
+      REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002,redis-node-4:7003,redis-node-5:7004,redis-node-6:7005
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       RABBITMQ_HOST: rabbitmq
       JWT_SECRET: docker-dev-change-me-use-long-secret-string-32chars-min
-      NGRINDER_BASE_URL: http://host.docker.internal:9080
+      NGRINDER_BASE_URL: http://controller
       NGRINDER_USERNAME: admin
       NGRINDER_PASSWORD: admin
+      TICKETING_NGRINDER_TARGET_BASE_URL: http://host.docker.internal:8080
       RATE_LIMIT_ENABLED: "true"
       RATE_LIMIT_IP_REQUESTS: "10000"
       RATE_LIMIT_IP_WINDOW_MS: "1000"
@@ -121,6 +269,29 @@ services:
     ports:
       - "80:80"
 
+  # nGrinder controller + agent (load test generator)
+  controller:
+    image: ngrinder/controller:latest
+    ports:
+      - "9080:80"
+      - "16001:16001"
+      - "9010-9019:9010-9019"
+      - "12000-12009:12000-12009"
+    environment:
+      TZ: Asia/Seoul
+    volumes:
+      - ngrinder_controller_data:/opt/ngrinder-controller
+
+  agent:
+    image: ngrinder/agent:latest
+    depends_on:
+      - controller
+    environment:
+      TZ: Asia/Seoul
+    # If you want more load, scale this service:
+    # docker compose up -d --scale agent=3
+
 volumes:
   mysql_data:
   grafana_data:
+  ngrinder_controller_data:

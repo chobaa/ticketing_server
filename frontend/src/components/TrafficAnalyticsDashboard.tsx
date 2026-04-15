@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   CartesianGrid,
   Line,
@@ -11,6 +12,7 @@ import {
 import { LiquidGlassPanel } from './LiquidGlassPanel'
 import {
   api,
+  type DashboardStatusDto,
   type NgrinderPerfResponse,
   type NgrinderStatusResponse,
   type NgrinderTestItem,
@@ -18,19 +20,38 @@ import {
 } from '../api'
 
 type Point = { time: string; tps: number; p99Latency: number; queueDepth: number }
+type MiniPoint = {
+  time: string
+  pingMs: number | null
+  mysqlMs: number | null
+  redisMs: number | null
+  kafkaMs: number | null
+  rabbitMs: number | null
+}
 
-export function TrafficAnalyticsDashboard() {
-  const [tab, setTab] = useState<'realtime' | 'loadtest' | 'grafana'>('realtime')
+export function UserDashboard() {
+  const nav = useNavigate()
   const [data, setData] = useState<Point[]>([])
+  const [mini, setMini] = useState<MiniPoint[]>([])
+  const [status, setStatus] = useState<DashboardStatusDto | null>(null)
+  const [pingMs, setPingMs] = useState<number | null>(null)
+  const pingMsRef = useRef<number | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [rtMode, setRtMode] = useState<'ws' | 'http'>('ws')
 
   useEffect(() => {
-    if (tab !== 'realtime') return
     const path = '/ws/metrics'
     const explicit = import.meta.env.VITE_WS_URL as string | undefined
     const url =
       explicit ||
       `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}${path}`
     const ws = new WebSocket(url)
+    let lastWsAt = Date.now()
+    const maybeMarkAlive = () => {
+      lastWsAt = Date.now()
+      setRtMode('ws')
+    }
+    ws.onopen = () => maybeMarkAlive()
     ws.onmessage = (ev) => {
       try {
         const m = JSON.parse(ev.data) as {
@@ -45,6 +66,7 @@ export function TrafficAnalyticsDashboard() {
           p99Latency: m.p99Latency ?? 0,
           queueDepth: m.queueDepth ?? 0,
         }
+        maybeMarkAlive()
         setData((prev) => {
           const next = [...prev, pt]
           return next.slice(-60)
@@ -53,75 +75,192 @@ export function TrafficAnalyticsDashboard() {
         /* ignore */
       }
     }
-    return () => ws.close()
-  }, [tab])
+    const watchdog = window.setInterval(() => {
+      // If no WS messages for a while, switch UI to HTTP fallback.
+      if (Date.now() - lastWsAt > 2500) setRtMode('http')
+    }, 1000)
+    ws.onclose = () => setRtMode('http')
+    ws.onerror = () => setRtMode('http')
+    return () => {
+      window.clearInterval(watchdog)
+      ws.close()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (rtMode !== 'http') return
+    let cancelled = false
+    const pull = async () => {
+      try {
+        const m = await api.dashboardRealtime()
+        if (cancelled) return
+        const pt: Point = {
+          time: m.time ? new Date(m.time).toLocaleTimeString() : '',
+          tps: m.tps ?? 0,
+          p99Latency: m.p99Latency ?? 0,
+          queueDepth: m.queueDepth ?? 0,
+        }
+        setData((prev) => [...prev, pt].slice(-60))
+      } catch {
+        // ignore (keeps last chart)
+      }
+    }
+    void pull()
+    const t = window.setInterval(pull, 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(t)
+    }
+  }, [rtMode])
+
+  useEffect(() => {
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        setErr(null)
+        const st = await api.dashboardStatus()
+        if (!cancelled) setStatus(st)
+        if (!cancelled) {
+          const t = new Date().toLocaleTimeString()
+          setMini((prev) =>
+            [
+              ...prev,
+              {
+                time: t,
+                pingMs: pingMsRef.current,
+                mysqlMs: st.deps.mysql.latencyMs ?? null,
+                redisMs: st.deps.redis.latencyMs ?? null,
+                kafkaMs: st.deps.kafka.latencyMs ?? null,
+                rabbitMs: st.deps.rabbitmq.latencyMs ?? null,
+              },
+            ].slice(-120),
+          )
+        }
+      } catch (e) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : '상태 조회 실패')
+      }
+    }
+    void refresh()
+    const t = window.setInterval(refresh, 5000)
+    return () => {
+      cancelled = true
+      window.clearInterval(t)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const ping = async () => {
+      const st = performance.now()
+      try {
+        await api.dashboardPing()
+        const ms = Math.max(0, Math.round((performance.now() - st) * 10) / 10)
+        if (!cancelled) {
+          pingMsRef.current = ms
+          setPingMs(ms)
+        }
+      } catch {
+        if (!cancelled) {
+          pingMsRef.current = null
+          setPingMs(null)
+        }
+      }
+    }
+    void ping()
+    const t = window.setInterval(ping, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(t)
+    }
+  }, [])
 
   const last = data[data.length - 1]
 
   return (
-    <div className={`mx-auto w-full ${tab === 'loadtest' ? 'max-w-6xl' : 'max-w-4xl'}`}>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+    <div className="mx-auto w-full max-w-6xl">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-lg font-semibold text-neutral-800 dark:text-neutral-100">대시보드</div>
+          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+            서버 상태/핑/반응속도 및 실시간 처리 지표를 확인합니다.
+          </div>
+        </div>
         <button
           type="button"
-          className={`rounded-full border px-4 py-1.5 text-sm backdrop-blur ${
-            tab === 'realtime'
-              ? 'border-white/40 bg-white/40 text-neutral-900 dark:bg-black/25 dark:text-white'
-              : 'border-white/20 bg-white/10 text-neutral-700 dark:text-neutral-200'
-          }`}
-          onClick={() => setTab('realtime')}
+          className="rounded-2xl bg-neutral-900/85 px-4 py-2 text-sm font-medium text-white shadow active:scale-[0.99] dark:bg-white/15"
+          onClick={() => nav('/dashboard/dev')}
         >
-          Realtime
-        </button>
-        <button
-          type="button"
-          className={`rounded-full border px-4 py-1.5 text-sm backdrop-blur ${
-            tab === 'loadtest'
-              ? 'border-white/40 bg-white/40 text-neutral-900 dark:bg-black/25 dark:text-white'
-              : 'border-white/20 bg-white/10 text-neutral-700 dark:text-neutral-200'
-          }`}
-          onClick={() => setTab('loadtest')}
-        >
-          Load test (nGrinder)
-        </button>
-        <button
-          type="button"
-          className={`rounded-full border px-4 py-1.5 text-sm backdrop-blur ${
-            tab === 'grafana'
-              ? 'border-white/40 bg-white/40 text-neutral-900 dark:bg-black/25 dark:text-white'
-              : 'border-white/20 bg-white/10 text-neutral-700 dark:text-neutral-200'
-          }`}
-          onClick={() => setTab('grafana')}
-        >
-          Grafana
+          Grafana (개발자)
         </button>
       </div>
 
-      {tab === 'realtime' ? (
-        <LiquidGlassPanel className="flex h-96 w-full flex-col p-6">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-inter text-xl font-bold tracking-tight text-neutral-800 dark:text-white">
-              Real-time System Analytics
-            </h3>
-            <div className="flex flex-wrap gap-4 text-sm font-medium">
-              <span className="text-[#007AFF]">TPS: {last?.tps ?? 0}</span>
-              <span className="text-[#FF3B30]">p99: {last ? `${last.p99Latency}ms` : '—'}</span>
-              <span className="text-violet-500">Queue: {last?.queueDepth ?? 0}</span>
-            </div>
+      {err && <p className="mb-3 text-sm text-red-500">{err}</p>}
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatusCard title="서버 핑" value={pingMs != null ? `${pingMs} ms` : '—'} tone="blue" />
+        <StatusCard
+          title="MySQL"
+          value={status?.deps.mysql.ok ? 'UP' : 'DOWN'}
+          sub={status ? `${status.deps.mysql.latencyMs}ms` : '—'}
+          tone={status?.deps.mysql.ok ? 'green' : 'red'}
+        />
+        <StatusCard
+          title="Redis"
+          value={status?.deps.redis.ok ? 'UP' : 'DOWN'}
+          sub={status ? `${status.deps.redis.latencyMs}ms` : '—'}
+          tone={status?.deps.redis.ok ? 'green' : 'red'}
+        />
+        <StatusCard
+          title="Kafka / RabbitMQ"
+          value={
+            status
+              ? `${status.deps.kafka.ok ? 'UP' : 'DOWN'} / ${status.deps.rabbitmq.ok ? 'UP' : 'DOWN'}`
+              : '—'
+          }
+          sub={status ? `K:${status.deps.kafka.latencyMs}ms · R:${status.deps.rabbitmq.latencyMs}ms` : '—'}
+          tone={status && status.deps.kafka.ok && status.deps.rabbitmq.ok ? 'green' : 'amber'}
+        />
+      </div>
+
+      <LiquidGlassPanel className="h-96 w-full" contentClassName="flex h-full flex-col p-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-inter text-xl font-bold tracking-tight text-neutral-800 dark:text-white">
+            실시간 상태
+          </h3>
+          <div className="flex flex-wrap gap-4 text-sm font-medium">
+            <span className="text-[#007AFF]">TPS: {last?.tps ?? 0}</span>
+            <span className="text-[#FF3B30]">p99: {last ? `${last.p99Latency}ms` : '—'}</span>
+            <span className="text-violet-500">Queue: {last?.queueDepth ?? 0}</span>
+            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+              {rtMode === 'ws' ? 'WS' : 'HTTP 폴백'}
+            </span>
           </div>
-          <div className="min-h-0 flex-1 w-full">
+        </div>
+        <div className="grid min-h-0 w-full flex-1 gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+          <div className="min-h-0 w-full rounded-2xl border border-white/15 bg-white/5 p-2 dark:bg-black/20">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={{ top: 5, right: 8, left: -16, bottom: 0 }}>
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke="rgba(255,255,255,0.2)"
-                  vertical={false}
-                />
+              <LineChart data={data} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.2)" vertical={false} />
                 <XAxis
                   dataKey="time"
                   stroke="rgba(163,163,163,0.8)"
                   tick={{ fontSize: 11, fontFamily: 'Inter' }}
                 />
-                <YAxis stroke="rgba(163,163,163,0.8)" tick={{ fontSize: 11, fontFamily: 'Inter' }} />
+                <YAxis
+                  yAxisId="tps"
+                  stroke="rgba(163,163,163,0.8)"
+                  tick={{ fontSize: 11, fontFamily: 'Inter' }}
+                  width={46}
+                  allowDecimals={false}
+                />
+                <YAxis
+                  yAxisId="ms"
+                  orientation="right"
+                  stroke="rgba(163,163,163,0.8)"
+                  tick={{ fontSize: 11, fontFamily: 'Inter' }}
+                  width={58}
+                />
+                <YAxis yAxisId="queue" orientation="right" hide />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: 'rgba(255, 255, 255, 0.85)',
@@ -131,8 +270,9 @@ export function TrafficAnalyticsDashboard() {
                     boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
                   }}
                 />
-                <Line type="monotone" dataKey="tps" name="TPS" stroke="#007AFF" strokeWidth={3} dot={false} />
+                <Line yAxisId="tps" type="monotone" dataKey="tps" name="TPS" stroke="#007AFF" strokeWidth={3} dot={false} />
                 <Line
+                  yAxisId="ms"
                   type="monotone"
                   dataKey="p99Latency"
                   name="p99 ms"
@@ -140,15 +280,61 @@ export function TrafficAnalyticsDashboard() {
                   strokeWidth={2}
                   dot={false}
                 />
+                <Line
+                  yAxisId="queue"
+                  type="monotone"
+                  dataKey="queueDepth"
+                  name="Queue"
+                  stroke="#8B5CF6"
+                  strokeWidth={2}
+                  dot={false}
+                />
               </LineChart>
             </ResponsiveContainer>
           </div>
-        </LiquidGlassPanel>
-      ) : tab === 'loadtest' ? (
-        <NgrinderLoadTestPanel />
-      ) : (
-        <GrafanaPanel />
-      )}
+
+          <div className="grid min-h-0 gap-3">
+            <MiniPanel title="Ping (ms)">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={mini} margin={{ top: 6, right: 8, left: -22, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.18)" vertical={false} />
+                  <XAxis dataKey="time" hide />
+                  <YAxis hide />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="pingMs" stroke="#007AFF" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </MiniPanel>
+
+            <MiniPanel title="Dependencies latency (ms)">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={mini} margin={{ top: 6, right: 8, left: -22, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.18)" vertical={false} />
+                  <XAxis dataKey="time" hide />
+                  <YAxis hide />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="mysqlMs" name="MySQL" stroke="#10B981" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="redisMs" name="Redis" stroke="#F59E0B" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="kafkaMs" name="Kafka" stroke="#8B5CF6" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="rabbitMs" name="Rabbit" stroke="#EF4444" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </MiniPanel>
+
+            <MiniPanel title="Queue depth">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={data} margin={{ top: 6, right: 8, left: -22, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.18)" vertical={false} />
+                  <XAxis dataKey="time" hide />
+                  <YAxis hide />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="queueDepth" stroke="#8B5CF6" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </MiniPanel>
+          </div>
+        </div>
+      </LiquidGlassPanel>
     </div>
   )
 }
@@ -157,19 +343,104 @@ function GrafanaPanel() {
   // Default to provisioned dashboard; user can open in new tab.
   const src = '/grafana/d/ticketing-overview/ticketing-overview?orgId=1&kiosk=tv'
   return (
-    <LiquidGlassPanel className="flex h-[32rem] w-full flex-col overflow-hidden p-0">
-      <div className="flex items-center justify-between gap-2 border-b border-white/15 bg-white/20 px-4 py-3 text-sm backdrop-blur dark:bg-black/20">
-        <div className="font-semibold text-neutral-800 dark:text-neutral-100">Grafana</div>
-        <a
-          className="text-xs font-medium text-[#007AFF] hover:underline"
-          href={src}
-          target="_blank"
-          rel="noreferrer"
-        >
-          새 탭으로 열기
-        </a>
+    <div className="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen">
+      <LiquidGlassPanel
+        className="h-[92vh] w-full overflow-hidden"
+        contentClassName="flex h-full flex-col p-0"
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-white/15 bg-white/20 px-4 py-3 text-sm backdrop-blur dark:bg-black/20">
+          <div className="font-semibold text-neutral-800 dark:text-neutral-100">Grafana</div>
+          <a
+            className="text-xs font-medium text-[#007AFF] hover:underline"
+            href={src}
+            target="_blank"
+            rel="noreferrer"
+          >
+            새 탭으로 열기
+          </a>
+        </div>
+        <iframe title="Grafana" src={src} className="min-h-0 w-full flex-1" />
+      </LiquidGlassPanel>
+    </div>
+  )
+}
+
+export function DeveloperDashboard() {
+  const [tab, setTab] = useState<'loadtest' | 'grafana'>('grafana')
+  return (
+    <div className="mx-auto w-full max-w-none">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm text-neutral-600 dark:text-neutral-300">
+          개발자 화면: 트래픽 생성(nGrinder) 및 Grafana 관측
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className={`rounded-full border px-4 py-1.5 text-sm backdrop-blur ${
+              tab === 'grafana'
+                ? 'border-white/40 bg-white/40 text-neutral-900 dark:bg-black/25 dark:text-white'
+                : 'border-white/20 bg-white/10 text-neutral-700 dark:text-neutral-200'
+            }`}
+            onClick={() => setTab('grafana')}
+          >
+            Grafana
+          </button>
+          <button
+            type="button"
+            className={`rounded-full border px-4 py-1.5 text-sm backdrop-blur ${
+              tab === 'loadtest'
+                ? 'border-white/40 bg-white/40 text-neutral-900 dark:bg-black/25 dark:text-white'
+                : 'border-white/20 bg-white/10 text-neutral-700 dark:text-neutral-200'
+            }`}
+            onClick={() => setTab('loadtest')}
+          >
+            인위적 트래픽 생성 (nGrinder)
+          </button>
+        </div>
       </div>
-      <iframe title="Grafana" src={src} className="h-full w-full" />
+
+      {tab === 'grafana' ? <GrafanaPanel /> : <NgrinderLoadTestPanel />}
+    </div>
+  )
+}
+
+function MiniPanel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-[5.5rem] flex-col overflow-hidden rounded-2xl border border-white/15 bg-white/5 p-3 dark:bg-black/20">
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+        {title}
+      </div>
+      <div className="min-h-0 flex-1">{children}</div>
+    </div>
+  )
+}
+
+function StatusCard({
+  title,
+  value,
+  sub,
+  tone,
+}: {
+  title: string
+  value: string
+  sub?: string
+  tone: 'blue' | 'green' | 'red' | 'amber'
+}) {
+  const toneCls =
+    tone === 'blue'
+      ? 'text-[#007AFF]'
+      : tone === 'green'
+        ? 'text-emerald-600 dark:text-emerald-300'
+        : tone === 'red'
+          ? 'text-red-600 dark:text-red-300'
+          : 'text-amber-700 dark:text-amber-300'
+  return (
+    <LiquidGlassPanel className="p-4">
+      <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+        {title}
+      </div>
+      <div className={`mt-2 text-lg font-semibold ${toneCls}`}>{value}</div>
+      <div className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{sub ?? ' '}</div>
     </LiquidGlassPanel>
   )
 }
@@ -439,6 +710,37 @@ function NgrinderLoadTestPanel() {
               테스트 목록에서 항목을 선택하면 상태·로그·TPS 그래프를 주기적으로 갱신합니다. SAVED 테스트는 READY로 올린 뒤
               에이전트가 실행하고, 종료된 테스트는 복제 실행으로 다시 돌릴 수 있습니다.
             </p>
+            <div className="mt-3 max-w-3xl rounded-2xl border border-white/20 bg-white/10 p-3 text-[12px] leading-relaxed text-neutral-700 backdrop-blur dark:bg-black/15 dark:text-neutral-200">
+              <div className="font-semibold text-neutral-800 dark:text-neutral-100">숫자/지표 설명</div>
+              <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                <li>
+                  <span className="font-semibold">VUser</span>: 동시에 요청을 보내는 가상 사용자 수(대략 동시 사용자). 값이 커질수록 부하가
+                  증가합니다.
+                </li>
+                <li>
+                  <span className="font-semibold">Duration(s)</span>: 테스트 실행 시간(초). 테스트가 끝나면 TPS/지연이 안정화되는 구간을
+                  확인하세요.
+                </li>
+                <li>
+                  <span className="font-semibold">SeatPool</span>: 테스트 스크립트가 고르는 좌석 후보의 크기. 작을수록 충돌이 늘어
+                  동시성/정합성 이슈를 더 강하게 자극합니다.
+                </li>
+                <li>
+                  <span className="font-semibold">TPS</span>: 초당 처리 건수(Throughput). 높을수록 시스템이 더 많은 요청을 처리 중입니다.
+                </li>
+                <li>
+                  <span className="font-semibold">Mean (ms)</span>: 평균 응답 시간(밀리초). TPS와 함께 보고, 급격한 상승은 병목/포화
+                  신호입니다.
+                </li>
+                <li>
+                  <span className="font-semibold">Errors</span>: 에러 발생 건수(구간별). 급증하면 서버 오류/타임아웃/레이트리밋 등을
+                  의심하세요.
+                </li>
+              </ul>
+              <div className="mt-2 text-[11px] text-neutral-500 dark:text-neutral-400">
+                팁: 목록에서 테스트를 선택하면 우측 상단의 TPS/Errors/Mean 값은 “가장 최근 구간”을 보여줍니다.
+              </div>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <input
@@ -446,6 +748,7 @@ function NgrinderLoadTestPanel() {
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder="대상 baseUrl (예: http://host.docker.internal:8080)"
+              title="nGrinder 에이전트가 요청을 보낼 대상 서버의 base URL"
             />
             <input
               className="w-[7.5rem] rounded-xl border border-white/30 bg-white/40 px-3 py-2 text-xs text-neutral-900 outline-none backdrop-blur dark:bg-black/20 dark:text-white"
@@ -453,6 +756,7 @@ function NgrinderLoadTestPanel() {
               onChange={(e) => setAllVusers(Number(e.target.value || 0))}
               placeholder="VUser"
               inputMode="numeric"
+              title="동시에 요청을 보내는 가상 사용자 수(부하 강도)"
             />
             <input
               className="w-[7.5rem] rounded-xl border border-white/30 bg-white/40 px-3 py-2 text-xs text-neutral-900 outline-none backdrop-blur dark:bg-black/20 dark:text-white"
@@ -460,6 +764,7 @@ function NgrinderLoadTestPanel() {
               onChange={(e) => setAllDurationSec(Number(e.target.value || 0))}
               placeholder="Duration(s)"
               inputMode="numeric"
+              title="테스트 실행 시간(초)"
             />
             <input
               className="w-[7.5rem] rounded-xl border border-white/30 bg-white/40 px-3 py-2 text-xs text-neutral-900 outline-none backdrop-blur dark:bg-black/20 dark:text-white"
@@ -467,6 +772,7 @@ function NgrinderLoadTestPanel() {
               onChange={(e) => setAllSeatPoolSize(Number(e.target.value || 0))}
               placeholder="SeatPool"
               inputMode="numeric"
+              title="좌석 후보 풀 크기(작을수록 좌석 충돌↑, 동시성 이슈 자극↑)"
             />
             <button
               type="button"

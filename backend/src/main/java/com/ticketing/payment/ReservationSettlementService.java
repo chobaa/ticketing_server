@@ -3,6 +3,7 @@ package com.ticketing.payment;
 import com.ticketing.event.Seat;
 import com.ticketing.event.SeatRepository;
 import com.ticketing.event.SeatViewCacheService;
+import com.ticketing.metrics.BusinessMetrics;
 import com.ticketing.messaging.ReservationEventProducer;
 import com.ticketing.messaging.dto.TicketCanceledEvent;
 import com.ticketing.ticket.Reservation;
@@ -23,6 +24,7 @@ public class ReservationSettlementService {
     private final SeatRepository seatRepository;
     private final SeatViewCacheService seatViewCacheService;
     private final ReservationEventProducer reservationEventProducer;
+    private final BusinessMetrics businessMetrics;
 
     @Transactional
     public void settleSuccess(Long reservationId) {
@@ -41,6 +43,7 @@ public class ReservationSettlementService {
         reservationRepository.save(reservation);
         seatRepository.save(seat);
         seatViewCacheService.invalidate(reservation.getEventId());
+        businessMetrics.incPaymentSucceeded();
     }
 
     @Transactional
@@ -59,6 +62,7 @@ public class ReservationSettlementService {
         reservationRepository.save(reservation);
         seatRepository.save(seat);
         seatViewCacheService.invalidate(reservation.getEventId());
+        businessMetrics.incPaymentFailed();
 
         reservationEventProducer.publishTicketCanceled(new TicketCanceledEvent(
                 reservation.getId(),

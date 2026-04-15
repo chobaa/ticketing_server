@@ -9,52 +9,104 @@
   "panels": [
     {
       "type": "stat",
+      "title": "Payments succeeded (total)",
+      "gridPos": { "x": 0, "y": 0, "w": 3, "h": 4 },
+      "targets": [{ "refId": "A", "expr": "sum(ticketing_payment_succeeded_total)" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "type": "stat",
+      "title": "Payments failed (total)",
+      "gridPos": { "x": 3, "y": 0, "w": 3, "h": 4 },
+      "targets": [{ "refId": "A", "expr": "sum(ticketing_payment_failed_total)" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "type": "stat",
+      "title": "Payments throughput / sec",
+      "gridPos": { "x": 6, "y": 0, "w": 3, "h": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ticketing_payment_succeeded_total[1m])) + sum(rate(ticketing_payment_failed_total[1m]))"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "type": "stat",
+      "title": "Waiting queue size",
+      "gridPos": { "x": 9, "y": 0, "w": 3, "h": 4 },
+      "targets": [{ "refId": "A", "expr": "ticketing_waiting_queue_size" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "type": "stat",
+      "title": "Kafka produced / sec",
+      "gridPos": { "x": 12, "y": 0, "w": 3, "h": 4 },
+      "targets": [{ "refId": "A", "expr": "sum(rate(ticketing_messaging_kafka_produced_total[1m]))" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "type": "stat",
+      "title": "Kafka consumed / sec",
+      "gridPos": { "x": 15, "y": 0, "w": 3, "h": 4 },
+      "targets": [{ "refId": "A", "expr": "sum(rate(ticketing_messaging_kafka_consumed_total[1m]))" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "type": "stat",
+      "title": "Rabbit published / sec",
+      "gridPos": { "x": 18, "y": 0, "w": 3, "h": 4 },
+      "targets": [{ "refId": "A", "expr": "sum(rate(ticketing_messaging_rabbit_published_total[1m]))" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "type": "stat",
+      "title": "Rabbit consumed / sec",
+      "gridPos": { "x": 21, "y": 0, "w": 3, "h": 4 },
+      "targets": [{ "refId": "A", "expr": "sum(rate(ticketing_messaging_rabbit_consumed_total[1m]))" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Payments (cumulative): succeeded vs failed",
+      "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
+      "targets": [
+        { "refId": "A", "expr": "sum(ticketing_payment_succeeded_total)" },
+        { "refId": "B", "expr": "sum(ticketing_payment_failed_total)" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Payment throughput / sec (success+fail)",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(ticketing_payment_succeeded_total[1m])) + sum(rate(ticketing_payment_failed_total[1m]))" }
+      ]
+    },
+    {
+      "type": "timeseries",
       "title": "Waiting queue size (OPEN events)",
-      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
       "targets": [
-        {
-          "refId": "A",
-          "expr": "ticketing_waiting_queue_size"
-        }
+        { "refId": "A", "expr": "ticketing_waiting_queue_size" }
       ]
     },
     {
-      "type": "stat",
-      "title": "Redis up (PING)",
-      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "type": "timeseries",
+      "title": "Infra status: Redis up / Rabbit connections / Kafka lag",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 },
       "targets": [
-        {
-          "refId": "A",
-          "expr": "ticketing_redis_up"
-        }
-      ]
-    },
-    {
-      "type": "stat",
-      "title": "RabbitMQ connections",
-      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "rabbitmq_connections"
-        }
-      ]
-    },
-    {
-      "type": "stat",
-      "title": "Kafka consumer lag (max)",
-      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "max(kafka_consumer_fetch_manager_records_lag_max)"
-        }
+        { "refId": "A", "expr": "ticketing_redis_up" },
+        { "refId": "B", "expr": "rabbitmq_connections" },
+        { "refId": "C", "expr": "max(kafka_consumer_fetch_manager_records_lag_max)" }
       ]
     },
     {
       "type": "timeseries",
       "title": "HTTP Requests / sec (all)",
-      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "gridPos": { "x": 0, "y": 28, "w": 12, "h": 8 },
       "targets": [
         {
           "refId": "A",
@@ -65,7 +117,7 @@
     {
       "type": "timeseries",
       "title": "HTTP Error rate (4xx + 5xx) / sec",
-      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "gridPos": { "x": 12, "y": 28, "w": 12, "h": 8 },
       "targets": [
         {
           "refId": "A",
@@ -76,7 +128,7 @@
     {
       "type": "timeseries",
       "title": "Latency p95 (seconds)",
-      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
+      "gridPos": { "x": 0, "y": 36, "w": 24, "h": 8 },
       "targets": [
         {
           "refId": "A",
@@ -87,7 +139,7 @@
     {
       "type": "timeseries",
       "title": "Kafka incoming bytes / sec (sum)",
-      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "gridPos": { "x": 0, "y": 44, "w": 12, "h": 8 },
       "targets": [
         {
           "refId": "A",
@@ -98,11 +150,52 @@
     {
       "type": "timeseries",
       "title": "RabbitMQ published / sec",
-      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
+      "gridPos": { "x": 12, "y": 44, "w": 12, "h": 8 },
       "targets": [
         {
           "refId": "A",
           "expr": "sum(rate(rabbitmq_published_total[1m]))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka messages / sec (app-level) by topic",
+      "gridPos": { "x": 0, "y": 52, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (topic) (rate(ticketing_messaging_kafka_produced_total[1m]))"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (topic) (rate(ticketing_messaging_kafka_consumed_total[1m]))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "RabbitMQ messages / sec (app-level) by queue",
+      "gridPos": { "x": 12, "y": 52, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (queue) (rate(ticketing_messaging_rabbit_published_total[1m]))"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (queue) (rate(ticketing_messaging_rabbit_consumed_total[1m]))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Redis ops / sec (app-level) by op",
+      "gridPos": { "x": 0, "y": 60, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (op) (rate(ticketing_redis_ops_total[1m]))"
         }
       ]
     }

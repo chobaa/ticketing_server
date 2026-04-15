@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ticketing.ngrinder.NgrinderClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,6 +23,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class NgrinderDashboardController {
     private final NgrinderClient ngrinderClient;
+
+    @Value("${ticketing.ngrinder.target-base-url:http://host.docker.internal:8080}")
+    private String defaultTargetBaseUrl;
 
     /** Page is 0-based (same as nGrinder / Spring Data). */
     @GetMapping("/tests")
@@ -102,12 +106,15 @@ public class NgrinderDashboardController {
     @PostMapping("/presets/{key}/start")
     public ResponseEntity<JsonNode> startPreset(
             @PathVariable String key,
-            @RequestParam(defaultValue = "http://host.docker.internal:8080") String baseUrl,
+            @RequestParam(required = false) String baseUrl,
             @RequestParam(required = false) Integer vusers,
             @RequestParam(required = false) Integer threads,
             @RequestParam(required = false) Integer testDurationSec,
             @RequestParam(required = false) Integer eventSeatCount,
             @RequestParam(required = false) Integer seatPoolSize) {
+        if (baseUrl == null || baseUrl.isBlank()) {
+            baseUrl = defaultTargetBaseUrl;
+        }
         // nGrinder requires the script to exist in controller's script repository.
         // If scripts are not uploaded, return a helpful message (instead of opaque "script should exist").
         JsonNode scripts = ngrinderClient.listScripts();
@@ -240,7 +247,10 @@ public class NgrinderDashboardController {
      */
     @PostMapping("/presets/run-all")
     public ResponseEntity<JsonNode> runAllPresets(
-            @RequestParam(defaultValue = "http://host.docker.internal:8080") String baseUrl) {
+            @RequestParam(required = false) String baseUrl) {
+        if (baseUrl == null || baseUrl.isBlank()) {
+            baseUrl = defaultTargetBaseUrl;
+        }
         ObjectNode out = JsonNodeFactory.instance.objectNode();
         // Order matters: create verification checks first so failures are obvious early.
         List<String> keys = List.of("comp", "conc", "integrity", "load-lite", "load-heavy");

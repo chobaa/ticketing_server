@@ -1,0 +1,7 @@
+spring:
+  data:
+    redis:
+      cluster:
+        # Comma-separated list via env: "redis-node-1:7000,redis-node-2:7001,..."
+        nodes: ${REDIS_CLUSTER_NODES:localhost:7000,localhost:7001,localhost:7002}
+

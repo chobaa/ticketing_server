@@ -1,6 +1,7 @@
 package com.ticketing.config;
 
 import com.ticketing.security.JwtAuthFilter;
+import com.ticketing.ratelimit.RateLimitFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,6 +26,7 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
+    private final RateLimitFilter rateLimitFilter;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -47,7 +49,9 @@ public class SecurityConfig {
                                         .authenticated()
                                         .anyRequest()
                                         .permitAll())
-                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                // Rate limit after JWT parsing so we can apply per-user limits.
+                .addFilterAfter(rateLimitFilter, JwtAuthFilter.class);
         return http.build();
     }
 

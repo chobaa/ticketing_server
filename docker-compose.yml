@@ -74,6 +74,14 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       RABBITMQ_HOST: rabbitmq
       JWT_SECRET: docker-dev-change-me-use-long-secret-string-32chars-min
+      NGRINDER_BASE_URL: http://host.docker.internal:9080
+      NGRINDER_USERNAME: admin
+      NGRINDER_PASSWORD: admin
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_IP_REQUESTS: "10000"
+      RATE_LIMIT_IP_WINDOW_MS: "1000"
+      RATE_LIMIT_USER_REQUESTS: "10000"
+      RATE_LIMIT_USER_WINDOW_MS: "1000"
     ports:
       - "8080:8080"
 
@@ -86,6 +94,24 @@ services:
     depends_on:
       - backend
 
+  grafana:
+    image: grafana/grafana:11.5.2
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
   frontend:
     build:
       context: ./frontend
@@ -97,3 +123,4 @@ services:
 
 volumes:
   mysql_data:
+  grafana_data:

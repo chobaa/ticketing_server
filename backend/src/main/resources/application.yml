@@ -64,6 +64,18 @@ ticketing:
   jwt:
     secret: ${JWT_SECRET:change-me-in-production-use-long-random-string-at-least-256-bits}
     expiration-ms: 86400000
+  ngrinder:
+    base-url: ${NGRINDER_BASE_URL:http://localhost:9080}
+    username: ${NGRINDER_USERNAME:admin}
+    password: ${NGRINDER_PASSWORD:admin}
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    ip:
+      requests: ${RATE_LIMIT_IP_REQUESTS:10}
+      window-ms: ${RATE_LIMIT_IP_WINDOW_MS:1000}
+    user:
+      requests: ${RATE_LIMIT_USER_REQUESTS:5}
+      window-ms: ${RATE_LIMIT_USER_WINDOW_MS:1000}
   payment:
     worker:
       concurrency: ${PAYMENT_WORKER_CONCURRENCY:8}

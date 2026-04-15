@@ -9,6 +9,24 @@ export function setToken(t: string | null) {
   else localStorage.removeItem('accessToken')
 }
 
+async function reqEmpty(
+  path: string,
+  opts: RequestInit & { skipAuth?: boolean } = {},
+): Promise<void> {
+  const headers: Record<string, string> = {
+    ...(opts.headers as Record<string, string>),
+  }
+  const tok = getToken()
+  if (tok && !opts.skipAuth) {
+    headers.Authorization = `Bearer ${tok}`
+  }
+  const r = await fetch(`${API_BASE}${path}`, { ...opts, headers })
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ error: r.statusText }))
+    throw new Error((err as { error?: string }).error ?? r.statusText)
+  }
+}
+
 async function req<T>(
   path: string,
   opts: RequestInit & { skipAuth?: boolean } = {},
@@ -78,6 +96,52 @@ export const api = {
     }),
   reservationProgress: (eventId: number, reservationId: number) =>
     req<ReservationPaymentProgressDto>(`/api/events/${eventId}/reservations/${reservationId}/progress`),
+
+  /** Page index is 0-based (nGrinder / Spring Data). */
+  ngrinderTests: (page = 0, size = 20) =>
+    req<NgrinderTestsListResponse>(`/api/dashboard/ngrinder/tests?page=${page}&size=${size}`),
+  ngrinderStatus: (id: number) => req<NgrinderStatusResponse>(`/api/dashboard/ngrinder/tests/${id}/status`),
+  ngrinderPerf: (id: number, dataType = 'TPS,Errors,Mean_Test_Time', imgWidth = 800) =>
+    req<NgrinderPerfResponse>(
+      `/api/dashboard/ngrinder/tests/${id}/perf?dataType=${encodeURIComponent(dataType)}&imgWidth=${imgWidth}`,
+    ),
+  ngrinderLogs: (id: number) => req<NgrinderLogsResponse>(`/api/dashboard/ngrinder/tests/${id}/logs`),
+  ngrinderReady: (id: number) =>
+    req<NgrinderPerfTestEntity>(`/api/dashboard/ngrinder/tests/${id}/ready`, { method: 'POST' }),
+  ngrinderStop: (id: number) => reqEmpty(`/api/dashboard/ngrinder/tests/${id}/stop`, { method: 'POST' }),
+  ngrinderCloneStart: (id: number) =>
+    req<NgrinderPerfTestEntity>(`/api/dashboard/ngrinder/tests/${id}/clone-and-start`, { method: 'POST' }),
+  ngrinderDeleteAll: () => reqEmpty(`/api/dashboard/ngrinder/tests/delete-all`, { method: 'POST' }),
+  ngrinderStartPreset: (
+    key: string,
+    opts?: {
+      baseUrl?: string
+      vusers?: number
+      threads?: number
+      testDurationSec?: number
+      eventSeatCount?: number
+      seatPoolSize?: number
+    },
+  ) =>
+    req<NgrinderPerfTestEntity>(
+      (() => {
+        const p = new URLSearchParams()
+        if (opts?.baseUrl) p.set('baseUrl', opts.baseUrl)
+        if (opts?.vusers != null) p.set('vusers', String(opts.vusers))
+        if (opts?.threads != null) p.set('threads', String(opts.threads))
+        if (opts?.testDurationSec != null) p.set('testDurationSec', String(opts.testDurationSec))
+        if (opts?.eventSeatCount != null) p.set('eventSeatCount', String(opts.eventSeatCount))
+        if (opts?.seatPoolSize != null) p.set('seatPoolSize', String(opts.seatPoolSize))
+        const qs = p.toString()
+        return `/api/dashboard/ngrinder/presets/${encodeURIComponent(key)}/start${qs ? `?${qs}` : ''}`
+      })(),
+      { method: 'POST' },
+    ),
+  ngrinderRunAllPresets: (baseUrl?: string) =>
+    req<Record<string, NgrinderPerfTestEntity | { error?: string }>>(
+      `/api/dashboard/ngrinder/presets/run-all${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`,
+      { method: 'POST' },
+    ),
 }
 
 export interface CreateEventBody {
@@ -123,4 +187,55 @@ export interface ReservationPaymentProgressDto {
   paymentFinishedAt: string | null
   failureCode: string | null
   failureMessage: string | null
+}
+
+export type NgrinderTestStatusName =
+  | 'SAVED'
+  | 'READY'
+  | 'TESTING'
+  | 'FINISHED'
+  | 'STOP_BY_ERROR'
+  | 'CANCELED'
+  | 'UNKNOWN'
+
+export interface NgrinderTestItem {
+  id: number
+  testName?: string
+  name?: string
+  description?: string
+  createdAt?: number
+  lastModifiedAt?: number
+  status?: { name?: NgrinderTestStatusName } | string
+}
+
+export interface NgrinderTestsListResponse {
+  tests?: NgrinderTestItem[]
+  totalElements?: number
+  number?: number
+  size?: number
+  /** Present when backend wrapped a raw JSON array from older nGrinder list APIs. */
+  hasNext?: boolean
+}
+
+/** nGrinder log list endpoint returns an array of file names (strings). */
+export type NgrinderLogsResponse = string[]
+
+/** Partial perf test returned after READY / clone (fields vary by version). */
+export interface NgrinderPerfTestEntity {
+  id?: number
+  testName?: string
+  status?: { name?: NgrinderTestStatusName }
+}
+
+export interface NgrinderStatusResponse {
+  id: number
+  message: string
+  status: { name: NgrinderTestStatusName }
+}
+
+export interface NgrinderPerfResponse {
+  TPS?: { TPS?: Array<number | null> }
+  Errors?: { Errors?: Array<number | null> }
+  Mean_Test_Time?: { ['Mean_Test_Time_(ms)']?: Array<number | null> }
+  chartInterval?: number
 }

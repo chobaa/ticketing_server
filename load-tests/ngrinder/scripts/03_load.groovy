@@ -5,7 +5,7 @@ import net.grinder.scriptengine.groovy.junit.GrinderRunner
 import net.grinder.scriptengine.groovy.junit.annotation.AfterProcess
 import net.grinder.scriptengine.groovy.junit.annotation.BeforeProcess
 import net.grinder.scriptengine.groovy.junit.annotation.BeforeThread
-import net.grinder.scriptengine.groovy.junit.annotation.Test
+import org.junit.Test
 import org.junit.runner.RunWith
 import org.ngrinder.http.HTTPRequest
 import org.ngrinder.http.HTTPResponse
@@ -21,6 +21,36 @@ import static org.hamcrest.Matchers.is
 
 @RunWith(GrinderRunner)
 class LoadScenario {
+    private static Map<String, String> scriptParams = parseScriptParams()
+
+    private static Map<String, String> parseScriptParams() {
+        String raw = System.getProperty("param", "")
+        if (raw == null || raw.isBlank()) return [:]
+        String normalized = raw.replace("\\\\n", "\n")
+        Map<String, String> out = [:]
+        // Allow ';' delimiter too (newlines in JVM args are brittle).
+        normalized.split("[\\r\\n;]+")
+                .collect { it?.trim() }
+                .findAll { it }
+                .each { line ->
+                    int idx = line.indexOf('=')
+                    if (idx > 0) {
+                        out.put(line.substring(0, idx).trim(), line.substring(idx + 1).trim())
+                    }
+                }
+        return out
+    }
+
+    private static String param(String key, String defaultValue) {
+        String v = scriptParams.get(key)
+        if (v != null && !v.isBlank()) return v
+        return grinder.properties.getProperty(key, defaultValue)
+    }
+
+    private static int paramInt(String key, String defaultValue) {
+        return (param(key, defaultValue) as int)
+    }
+
     static GTest testJoin
     static GTest testAdmission
     static GTest testReserve
@@ -56,9 +86,9 @@ class LoadScenario {
     @BeforeProcess
     static void beforeProcess() {
         runId = System.currentTimeMillis()
-        baseUrl = Grinder.grinderProperties.getProperty("baseUrl", "http://localhost:8080")
-        adminPassword = Grinder.grinderProperties.getProperty("adminPassword", "password123456")
-        String adminEmailProp = Grinder.grinderProperties.getProperty("adminEmail", "")
+        baseUrl = param("baseUrl", "http://localhost:8080")
+        adminPassword = param("adminPassword", "password123456")
+        String adminEmailProp = param("adminEmail", "")
         adminEmail = adminEmailProp?.trim() ? adminEmailProp.trim() : "admin_${runId}@example.com"
 
         testJoin = new GTest(1, "03 load - joinQueue")
@@ -87,7 +117,7 @@ class LoadScenario {
         int threadIdx = (grinder.threadNumber as int)
         int procNum = (grinder.getProcessNumber() as int)
 
-        String userPassword = Grinder.grinderProperties.getProperty("userPassword", "password123456")
+        String userPassword = param("userPassword", "password123456")
         String userEmail = "vuser_${runId}_${procNum}_${threadIdx}@example.com"
 
         String token = registerOrLogin(userEmail, userPassword)
@@ -97,7 +127,7 @@ class LoadScenario {
                 "Content-Type" : "application/json"
         ]
 
-        long testDurationSec = (Grinder.grinderProperties.getProperty("testDurationSec", "30") as long)
+        long testDurationSec = (param("testDurationSec", "30") as long)
         endTimeMs = System.currentTimeMillis() + testDurationSec * 1000L
     }
 
@@ -143,12 +173,12 @@ class LoadScenario {
                 "Content-Type" : "application/json"
         ]
 
-        int seatCount = (Grinder.grinderProperties.getProperty("eventSeatCount", "200") as int)
-        BigDecimal seatPrice = new BigDecimal(Grinder.grinderProperties.getProperty("seatPrice", "100.00"))
-        String grade = Grinder.grinderProperties.getProperty("seatGrade", "R")
+        int seatCount = paramInt("eventSeatCount", "200")
+        BigDecimal seatPrice = new BigDecimal(param("seatPrice", "100.00"))
+        String grade = param("seatGrade", "R")
 
-        String eventName = Grinder.grinderProperties.getProperty("eventName", "event_${runId}")
-        String venue = Grinder.grinderProperties.getProperty("eventVenue", "seoul")
+        String eventName = param("eventName", "event_${runId}")
+        String venue = param("eventVenue", "seoul")
         String startDate = LocalDateTime.now().plusMinutes(5).toString()
 
         Map<String, Object> createBody = [
@@ -216,8 +246,8 @@ class LoadScenario {
 
     private String pollAdmissionToken() {
         String url = baseUrl + "/api/events/" + eventId + "/admission"
-        int pollIntervalMs = (Grinder.grinderProperties.getProperty("admissionPollIntervalMs", "200") as int)
-        int maxWaitSec = (Grinder.grinderProperties.getProperty("admissionMaxWaitSec", "20") as int)
+        int pollIntervalMs = paramInt("admissionPollIntervalMs", "200")
+        int maxWaitSec = paramInt("admissionMaxWaitSec", "20")
         int maxAttempts = (maxWaitSec * 1000) / pollIntervalMs
 
         def json = new JsonSlurper()

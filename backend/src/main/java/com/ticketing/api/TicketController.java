@@ -58,4 +58,13 @@ public class TicketController {
             @AuthenticationPrincipal Long userId) {
         return ResponseEntity.ok(reservationService.getProgress(userId, eventId, reservationId));
     }
+
+    @PostMapping("/reservations/{reservationId}/cancel")
+    public ResponseEntity<Void> cancelReservation(
+            @PathVariable Long eventId,
+            @PathVariable Long reservationId,
+            @AuthenticationPrincipal Long userId) {
+        reservationService.cancel(userId, eventId, reservationId, "user_cancel");
+        return ResponseEntity.noContent().build();
+    }
 }

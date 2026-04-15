@@ -1,45 +1,39 @@
 import groovy.json.JsonSlurper
 import net.grinder.script.GTest
-import net.grinder.script.Grinder
 import net.grinder.scriptengine.groovy.junit.GrinderRunner
+import net.grinder.scriptengine.groovy.junit.annotation.AfterProcess
 import net.grinder.scriptengine.groovy.junit.annotation.BeforeProcess
 import net.grinder.scriptengine.groovy.junit.annotation.BeforeThread
-import net.grinder.scriptengine.groovy.junit.annotation.AfterProcess
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ngrinder.http.HTTPRequest
 import org.ngrinder.http.HTTPResponse
-import java.time.LocalDateTime
+
 import java.math.BigDecimal
+import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 import static net.grinder.script.Grinder.grinder
 import static org.hamcrest.MatcherAssert.assertThat
-import static org.hamcrest.Matchers.is
 import static org.hamcrest.Matchers.greaterThan
+import static org.hamcrest.Matchers.is
 
 @RunWith(GrinderRunner)
-class ComprehensiveScenario {
+class AllInOneScenario {
     private static Map<String, String> scriptParams = parseScriptParams()
 
     private static Map<String, String> parseScriptParams() {
-        // REST API로 perftest.param을 넣으면 nGrinder가 "-Dparam=..."로 전달합니다.
-        // UI의 "Script Parameters"처럼 개별 grinder.properties로 풀리지 않을 수 있어 여기서 직접 파싱합니다.
         String raw = System.getProperty("param", "")
         if (raw == null || raw.isBlank()) return [:]
-        // Support both actual newlines and literal "\n"
         String normalized = raw.replace("\\\\n", "\n")
         Map<String, String> out = [:]
-        // Allow ';' delimiter too (newlines in JVM args are brittle).
         normalized.split("[\\r\\n;]+")
                 .collect { it?.trim() }
                 .findAll { it }
                 .each { line ->
                     int idx = line.indexOf('=')
-                    if (idx > 0) {
-                        out.put(line.substring(0, idx).trim(), line.substring(idx + 1).trim())
-                    }
+                    if (idx > 0) out.put(line.substring(0, idx).trim(), line.substring(idx + 1).trim())
                 }
         return out
     }
@@ -57,12 +51,17 @@ class ComprehensiveScenario {
     static GTest testJoin
     static GTest testAdmission
     static GTest testReserve
+    static GTest testCancel
+    static GTest testProgress
+    static GTest testSeatCheck
 
     static HTTPRequest requestJoin
     static HTTPRequest requestAdmission
     static HTTPRequest requestReserve
+    static HTTPRequest requestCancel
+    static HTTPRequest requestProgress
+    static HTTPRequest requestSeatCheck
 
-    // setup-only (do not record TPS)
     static HTTPRequest setupRequest
 
     static long runId
@@ -73,15 +72,21 @@ class ComprehensiveScenario {
     static Long eventId
     static List<Long> seatIds = []
 
-    static AtomicInteger successCount = new AtomicInteger(0)
-    static ConcurrentHashMap<Long, Boolean> successSeatIds = new ConcurrentHashMap<>()
+    // Metrics / validations across process
+    static AtomicInteger reserveAttempted = new AtomicInteger(0)
+    static AtomicInteger reserveSucceeded = new AtomicInteger(0)
+    static AtomicInteger cancelSucceeded = new AtomicInteger(0)
+    static AtomicInteger wrongSeatCount = new AtomicInteger(0)
+
+    // Tracks currently-held seats to detect double-success concurrency bug
+    static ConcurrentHashMap<Long, Long> activeSeatToReservation = new ConcurrentHashMap<>()
 
     // per thread
     String bearer
     Map<String, String> headersAuthJson
-    long chosenSeatId
     String admissionTokenCached
     long endAtMs
+    long chosenSeatId
 
     @BeforeProcess
     static void beforeProcess() {
@@ -91,16 +96,26 @@ class ComprehensiveScenario {
         String adminEmailProp = param("adminEmail", "")
         adminEmail = adminEmailProp?.trim() ? adminEmailProp.trim() : "admin_${runId}@example.com"
 
-        testJoin = new GTest(1, "01 comprehensive - joinQueue")
-        testAdmission = new GTest(2, "01 comprehensive - admissionPoll")
-        testReserve = new GTest(3, "01 comprehensive - reserve")
+        testJoin = new GTest(1, "05 all-in-one - joinQueue")
+        testAdmission = new GTest(2, "05 all-in-one - admissionPoll")
+        testReserve = new GTest(3, "05 all-in-one - reserve")
+        testCancel = new GTest(4, "05 all-in-one - cancel")
+        testProgress = new GTest(5, "05 all-in-one - progress")
+        testSeatCheck = new GTest(6, "05 all-in-one - seatCheck")
 
         requestJoin = new HTTPRequest()
         requestAdmission = new HTTPRequest()
         requestReserve = new HTTPRequest()
+        requestCancel = new HTTPRequest()
+        requestProgress = new HTTPRequest()
+        requestSeatCheck = new HTTPRequest()
+
         testJoin.record(requestJoin)
         testAdmission.record(requestAdmission)
         testReserve.record(requestReserve)
+        testCancel.record(requestCancel)
+        testProgress.record(requestProgress)
+        testSeatCheck.record(requestSeatCheck)
 
         setupRequest = new HTTPRequest()
         initEventAndSeats()
@@ -108,9 +123,12 @@ class ComprehensiveScenario {
 
     @BeforeThread
     void beforeThread() {
-        testJoin.record(this, "01 comprehensive - joinQueue")
-        testAdmission.record(this, "01 comprehensive - admissionPoll")
-        testReserve.record(this, "01 comprehensive - reserve")
+        testJoin.record(this, "05 all-in-one - joinQueue")
+        testAdmission.record(this, "05 all-in-one - admissionPoll")
+        testReserve.record(this, "05 all-in-one - reserve")
+        testCancel.record(this, "05 all-in-one - cancel")
+        testProgress.record(this, "05 all-in-one - progress")
+        testSeatCheck.record(this, "05 all-in-one - seatCheck")
         grinder.statistics.delayReports = true
 
         int threadIdx = (grinder.threadNumber as int)
@@ -126,51 +144,66 @@ class ComprehensiveScenario {
                 "Content-Type" : "application/json"
         ]
 
-        if (!seatIds.isEmpty()) {
-            chosenSeatId = seatIds.get(threadIdx % seatIds.size()) as long
-        } else {
-            chosenSeatId = 1L
-        }
-
-        int testDurationSec = paramInt("testDurationSec", "20")
-        if (testDurationSec < 1) testDurationSec = 20
+        int testDurationSec = paramInt("testDurationSec", "30")
+        if (testDurationSec < 1) testDurationSec = 30
         endAtMs = System.currentTimeMillis() + (testDurationSec * 1000L)
+
+        int poolSize = paramInt("seatPoolSize", "10")
+        if (poolSize < 1) poolSize = 1
+        if (seatIds.isEmpty()) {
+            chosenSeatId = 1L
+        } else {
+            int effectivePool = Math.min(poolSize, seatIds.size())
+            chosenSeatId = seatIds.get(threadIdx % effectivePool) as long
+        }
     }
 
     @Test
     void test() {
-        // Run a mixed workload loop during the configured duration.
-        // Goal: keep TPS meaningful while still validating the end-to-end flow at least once per thread.
         while (System.currentTimeMillis() < endAtMs) {
-            long stepStart = System.currentTimeMillis()
+            if (admissionTokenCached == null) {
+                joinQueue()
+                admissionTokenCached = pollAdmissionToken()
+            }
+
+            reserveAttempted.incrementAndGet()
+            Long reservationId = reserveOnce(chosenSeatId, admissionTokenCached)
+            if (reservationId != null) {
+                // Verify reservation belongs to the seat this user attempted
+                verifyProgress(reservationId, ["PENDING_PAYMENT", "CONFIRMED", "CANCELED"])
+                cancelReservation(reservationId)
+                verifyProgress(reservationId, ["CANCELED"])
+                verifySeatAvailable(chosenSeatId)
+            }
+
             try {
-                if (admissionTokenCached == null) {
-                    joinQueue()
-                    admissionTokenCached = pollAdmissionToken()
-                }
-                reserveOnce(chosenSeatId, admissionTokenCached)
-            } finally {
-                long elapsed = System.currentTimeMillis() - stepStart
-                // Light jitter to reduce lockstep behavior
-                long sleep = Math.max(0L, 50L - Math.min(50L, elapsed))
-                if (sleep > 0) {
-                    try {
-                        Thread.sleep(sleep + (grinder.threadNumber % 10))
-                    } catch (InterruptedException ignored) {
-                        Thread.currentThread().interrupt()
-                    }
-                }
+                Thread.sleep(10 + (grinder.threadNumber % 7))
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt()
             }
         }
     }
 
     @AfterProcess
     static void afterProcess() {
-        // Sanity check: at least one reservation should succeed.
-        // If this fails, the environment is likely misconfigured (queue/admission) or too overloaded.
-        int ok = successCount.get()
-        grinder.logger.info("ComprehensiveScenario summary: successCount={}, uniqueSeats={}", ok, successSeatIds.size())
-        assertThat(ok, is(greaterThan(0)))
+        grinder.logger.info(
+                "AllInOneScenario summary: attempted={}, reserveOk={}, cancelOk={}, wrongSeat={}, activeSeats={}",
+                reserveAttempted.get(),
+                reserveSucceeded.get(),
+                cancelSucceeded.get(),
+                wrongSeatCount.get(),
+                activeSeatToReservation.size()
+        )
+
+        // 1) Must have at least one successful reserve+cancel cycle
+        assertThat(reserveSucceeded.get(), is(greaterThan(0)))
+        assertThat(cancelSucceeded.get(), is(greaterThan(0)))
+
+        // 2) No user should receive a different seat than requested
+        assertThat(wrongSeatCount.get(), is(0))
+
+        // 3) No leftover active seat lock from the test flow
+        assertThat(activeSeatToReservation.size(), is(0))
     }
 
     private static void initEventAndSeats() {
@@ -180,13 +213,13 @@ class ComprehensiveScenario {
                 "Content-Type" : "application/json"
         ]
 
-        int seatCount = paramInt("eventSeatCount", "20")
+        int seatCount = paramInt("eventSeatCount", "400")
+        if (seatCount < 1) seatCount = 1
         BigDecimal seatPrice = new BigDecimal(param("seatPrice", "100.00"))
         String grade = param("seatGrade", "R")
 
         String eventName = param("eventName", "event_${runId}")
         String venue = param("eventVenue", "seoul")
-
         String startDate = LocalDateTime.now().plusMinutes(5).toString()
 
         Map<String, Object> createBody = [
@@ -198,42 +231,34 @@ class ComprehensiveScenario {
                 grade     : grade
         ]
 
-        String createUrl = baseUrl + "/api/events"
-        HTTPResponse createResp = setupRequest.POST(createUrl, createBody, adminHeadersJson)
+        HTTPResponse createResp = setupRequest.POST(baseUrl + "/api/events", createBody, adminHeadersJson)
         if (createResp.getStatusCode() != 200) {
             throw new IllegalStateException("Event create failed: status=" + createResp.getStatusCode() + " body=" + createResp.getBodyText())
         }
-
         def eventObj = new JsonSlurper().parseText(createResp.getBodyText())
         eventId = (eventObj.id as long)
 
-        String seatsUrl = baseUrl + "/api/events/" + eventId + "/seats"
-        HTTPResponse seatsResp = setupRequest.GET(seatsUrl)
+        HTTPResponse seatsResp = setupRequest.GET(baseUrl + "/api/events/" + eventId + "/seats")
         if (seatsResp.getStatusCode() != 200) {
             throw new IllegalStateException("Seat fetch failed: status=" + seatsResp.getStatusCode() + " body=" + seatsResp.getBodyText())
         }
         def seatList = new JsonSlurper().parseText(seatsResp.getBodyText()) as List
         seatIds = seatList.collect { (it.id as long) }
-
-        grinder.logger.info("ComprehensiveScenario init: eventId={} seatIds={}", eventId, seatIds.size())
+        grinder.logger.info("AllInOneScenario init: eventId={} seats={}", eventId, seatIds.size())
     }
 
     private static String registerOrLogin(String email, String password) {
         String token = login(email, password)
         if (token != null) return token
 
-        // register -> login
         Map<String, String> jsonHeaders = ["Content-Type": "application/json"]
         Map<String, Object> registerBody = ["email": email, "password": password]
         HTTPResponse regResp = setupRequest.POST(baseUrl + "/api/auth/register", registerBody, jsonHeaders)
-        // if already registered, register returns 400; proceed to login
         if (regResp.getStatusCode() != 200 && regResp.getStatusCode() != 400) {
             grinder.logger.warn("register unexpected status={} body={}", regResp.getStatusCode(), regResp.getBodyText())
         }
         token = login(email, password)
-        if (token == null) {
-            throw new IllegalStateException("login failed after register: email=" + email)
-        }
+        if (token == null) throw new IllegalStateException("login failed after register: email=" + email)
         return token
     }
 
@@ -245,7 +270,7 @@ class ComprehensiveScenario {
             if (loginResp.getStatusCode() != 200) return null
             def tokenObj = new JsonSlurper().parseText(loginResp.getBodyText())
             return tokenObj.accessToken as String
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             return null
         }
     }
@@ -282,26 +307,75 @@ class ComprehensiveScenario {
                 Thread.currentThread().interrupt()
             }
         }
-        throw new IllegalStateException("Timeout waiting admission token. seatId=" + chosenSeatId)
+        throw new IllegalStateException("Timeout waiting admission token")
     }
 
-    private void reserveOnce(long seatId, String admissionToken) {
+    private Long reserveOnce(long seatId, String admissionToken) {
         String url = baseUrl + "/api/events/" + eventId + "/reservations"
         Map<String, Object> body = ["seatId": seatId, "admissionToken": admissionToken]
         HTTPResponse resp = requestReserve.POST(url, body, headersAuthJson)
-        if (resp.getStatusCode() != 200) {
-            grinder.logger.warn("reserve failed status={} body={}", resp.getStatusCode(), resp.getBodyText())
-            return
-        }
+
+        // Under contention it's expected to fail often; only 200 means reservation created.
+        if (resp.getStatusCode() != 200) return null
 
         def reservation = new JsonSlurper().parseText(resp.getBodyText())
+        long reservationId = reservation.id as long
         long reservedSeatId = reservation.seatId as long
-        String status = reservation.status as String
-        if (status != null && status.toUpperCase() == "PENDING_PAYMENT") {
-            successCount.incrementAndGet()
-            successSeatIds.put(reservedSeatId, true)
-        } else {
-            grinder.logger.warn("reserve unexpected status={}, reservation={}", status, resp.getBodyText())
+
+        if (reservedSeatId != seatId) {
+            wrongSeatCount.incrementAndGet()
+            grinder.logger.error("Wrong seat reserved: expected={} actual={} reservationId={}", seatId, reservedSeatId, reservationId)
+        }
+
+        // Concurrency guard: the same seat should not be successfully reserved twice at the same time
+        Long prev = activeSeatToReservation.putIfAbsent(seatId, reservationId)
+        if (prev != null) {
+            throw new IllegalStateException("Concurrency bug suspected: seat " + seatId + " reserved twice (prevReservationId=" + prev + ", newReservationId=" + reservationId + ")")
+        }
+
+        reserveSucceeded.incrementAndGet()
+        return reservationId
+    }
+
+    private void cancelReservation(long reservationId) {
+        String url = baseUrl + "/api/events/" + eventId + "/reservations/" + reservationId + "/cancel"
+        HTTPResponse resp = requestCancel.POST(url, [:], ["Authorization": "Bearer " + bearer])
+        if (resp.getStatusCode() != 204) {
+            // ensure we don't leak activeSeats on cancel failure
+            activeSeatToReservation.values().removeIf { it == reservationId }
+            throw new IllegalStateException("cancel failed: status=" + resp.getStatusCode() + " body=" + resp.getBodyText())
+        }
+
+        // remove seat from active map
+        activeSeatToReservation.remove(chosenSeatId, reservationId as Long)
+        cancelSucceeded.incrementAndGet()
+    }
+
+    private void verifyProgress(long reservationId, List<String> expectedStatuses) {
+        String url = baseUrl + "/api/events/" + eventId + "/reservations/" + reservationId + "/progress"
+        HTTPResponse resp = requestProgress.GET(url, [:], ["Authorization": "Bearer " + bearer])
+        if (resp.getStatusCode() != 200) {
+            throw new IllegalStateException("progress failed: status=" + resp.getStatusCode() + " body=" + resp.getBodyText())
+        }
+        def obj = new JsonSlurper().parseText(resp.getBodyText())
+        String st = (obj.reservationStatus as String)
+        if (st == null || !expectedStatuses.any { it.equalsIgnoreCase(st) }) {
+            throw new IllegalStateException("unexpected reservationStatus=" + st + " expected=" + expectedStatuses)
+        }
+    }
+
+    private void verifySeatAvailable(long seatId) {
+        String url = baseUrl + "/api/events/" + eventId + "/seats"
+        HTTPResponse resp = requestSeatCheck.GET(url)
+        if (resp.getStatusCode() != 200) {
+            throw new IllegalStateException("seat list failed: status=" + resp.getStatusCode() + " body=" + resp.getBodyText())
+        }
+        def seatList = new JsonSlurper().parseText(resp.getBodyText()) as List
+        def seat = seatList.find { (it.id as long) == seatId }
+        if (seat == null) throw new IllegalStateException("seat not found in list: seatId=" + seatId)
+        String st = seat.status as String
+        if (!"AVAILABLE".equalsIgnoreCase(st)) {
+            throw new IllegalStateException("seat not AVAILABLE after cancel: seatId=" + seatId + " status=" + st)
         }
     }
 }

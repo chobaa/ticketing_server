@@ -8,6 +8,7 @@ import com.ticketing.messaging.ReservationEventProducer;
 import com.ticketing.messaging.dto.TicketReservedEvent;
 import com.ticketing.payment.Payment;
 import com.ticketing.payment.PaymentRepository;
+import com.ticketing.payment.ReservationSettlementService;
 import lombok.RequiredArgsConstructor;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
@@ -30,6 +31,7 @@ public class ReservationService {
     private final ReservationEventProducer reservationEventProducer;
     private final SeatViewCacheService seatViewCacheService;
     private final PaymentRepository paymentRepository;
+    private final ReservationSettlementService reservationSettlementService;
 
     @Value("${ticketing.reservation.hold-ttl-minutes}")
     private int holdTtlMinutes;
@@ -111,5 +113,17 @@ public class ReservationService {
                 paymentTerminal ? payment.getUpdatedAt() : null,
                 payment == null ? null : payment.getFailureCode(),
                 payment == null ? null : payment.getFailureMessage());
+    }
+
+    @Transactional
+    public void cancel(long userId, long eventId, long reservationId, String reason) {
+        Reservation reservation =
+                reservationRepository
+                        .findByIdAndUserIdAndEventId(reservationId, userId, eventId)
+                        .orElseThrow(() -> new IllegalArgumentException("Reservation not found"));
+        if ("CONFIRMED".equalsIgnoreCase(reservation.getStatus())) {
+            throw new IllegalStateException("Confirmed reservation cannot be canceled");
+        }
+        reservationSettlementService.settleFailure(reservationId, reason == null ? "user_cancel" : reason);
     }
 }

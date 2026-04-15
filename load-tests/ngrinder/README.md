@@ -14,6 +14,17 @@ docker run -d -p 8080:80 -p 16001:16001 -p 12000-12009:12000-12009 ngrinder/ngri
 
 에이전트는 별도 호스트 또는 컨테이너로 띄운 뒤 컨트롤러에 등록합니다.
 
+## 스크립트 업로드 (필수: "script should exist" 방지)
+
+nGrinder REST API로 테스트를 생성할 때 `script should exist`가 뜨면, 컨트롤러에 스크립트가 아직 업로드되지 않은 상태입니다.
+
+PowerShell에서 아래 스크립트를 1회 실행해 업로드하세요:
+
+```powershell
+cd C:\Users\Chobaa\Desktop\ticketing_server
+.\load-tests\ngrinder\upload-scripts.ps1 -ControllerBaseUrl http://localhost:9080 -Username admin -Password admin
+```
+
 ## 스크립트 타깃
 
 - 로컬 백엔드: `http://localhost:8080`

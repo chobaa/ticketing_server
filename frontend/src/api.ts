@@ -97,6 +97,10 @@ export const api = {
   reservationProgress: (eventId: number, reservationId: number) =>
     req<ReservationPaymentProgressDto>(`/api/events/${eventId}/reservations/${reservationId}/progress`),
 
+  dashboardStatus: () => req<DashboardStatusDto>(`/api/dashboard/status`),
+  dashboardPing: () => req<{ time: string }>(`/api/dashboard/ping`),
+  dashboardRealtime: () => req<{ time?: string; tps?: number; p99Latency?: number; queueDepth?: number }>(`/api/dashboard/realtime`),
+
   /** Page index is 0-based (nGrinder / Spring Data). */
   ngrinderTests: (page = 0, size = 20) =>
     req<NgrinderTestsListResponse>(`/api/dashboard/ngrinder/tests?page=${page}&size=${size}`),
@@ -142,6 +146,17 @@ export const api = {
       `/api/dashboard/ngrinder/presets/run-all${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`,
       { method: 'POST' },
     ),
+}
+
+export type DepStatus = { ok: boolean; latencyMs: number; error?: string }
+export interface DashboardStatusDto {
+  time: string
+  deps: {
+    mysql: DepStatus
+    redis: DepStatus
+    rabbitmq: DepStatus
+    kafka: DepStatus
+  }
 }
 
 export interface CreateEventBody {

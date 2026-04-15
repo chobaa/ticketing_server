@@ -46,7 +46,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         String ip = clientIp(request);
         if (ip != null && !ip.isBlank()) {
             RateLimitResult ipRes = service.check(
-                    "rl:ip:" + ip,
+                    "rl:ip:{" + ip + "}",
                     now,
                     props.ip().windowMs(),
                     props.ip().requests());
@@ -59,7 +59,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         Long userId = authenticatedUserId();
         if (userId != null) {
             RateLimitResult userRes = service.check(
-                    "rl:user:" + userId,
+                    "rl:user:{" + userId + "}",
                     now,
                     props.user().windowMs(),
                     props.user().requests());

@@ -10,7 +10,7 @@ import {
   type SeatDto,
 } from './api'
 import { LiquidGlassPanel } from './components/LiquidGlassPanel'
-import { TrafficAnalyticsDashboard } from './components/TrafficAnalyticsDashboard'
+import { DeveloperDashboard, UserDashboard } from './components/TrafficAnalyticsDashboard'
 
 function AuthCard({ onAuthed }: { onAuthed: () => void }) {
   const [email, setEmail] = useState('demo@ticketing.local')
@@ -639,7 +639,11 @@ export default function App() {
           />
           <Route
             path="/dashboard"
-            element={authed ? <TrafficAnalyticsDashboard /> : <Navigate to="/" replace />}
+            element={authed ? <UserDashboard /> : <Navigate to="/" replace />}
+          />
+          <Route
+            path="/dashboard/dev"
+            element={authed ? <DeveloperDashboard /> : <Navigate to="/" replace />}
           />
         </Routes>
       </Layout>

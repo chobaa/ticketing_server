@@ -297,9 +297,7 @@ function EventDetail() {
         )
         const adm = await api.admission(eventId)
         if (adm?.token) setAdmissionToken(adm.token)
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     }, 2000)
     return () => clearInterval(handle)
   }, [eventId, admissionToken])
@@ -455,18 +453,18 @@ function EventDetail() {
           ← 목록
         </Link>
         <LiquidGlassPanel className="mb-6">
-        <div className="text-lg font-semibold">예매</div>
-        <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">{queueText}</p>
-        <p className="mt-1 text-xs text-neutral-500">
-          입장 토큰: {admissionToken ? `${admissionToken.slice(0, 8)}…` : '없음'}
-        </p>
-        <button
-          type="button"
-          className="mt-4 rounded-2xl bg-[#007AFF] px-5 py-2.5 text-sm font-medium text-white"
-          onClick={join}
-        >
-          대기열 진입
-        </button>
+          <div className="text-lg font-semibold">예매</div>
+          <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">{queueText}</p>
+          <p className="mt-1 text-xs text-neutral-500">
+            입장 토큰: {admissionToken ? `${admissionToken.slice(0, 8)}…` : '없음'}
+          </p>
+          <button
+            type="button"
+            className="mt-4 rounded-2xl bg-[#007AFF] px-5 py-2.5 text-sm font-medium text-white"
+            onClick={join}
+          >
+            대기열 진입
+          </button>
         </LiquidGlassPanel>
         {msg && <p className="mb-4 text-center text-sm text-neutral-700 dark:text-neutral-200">{msg}</p>}
         {paymentStep && (
@@ -495,45 +493,47 @@ function EventDetail() {
               </div>
             )}
             <div className="mt-3 rounded-xl border border-white/30 bg-white/25 p-3 text-sm dark:bg-black/20">
-            <div className="mb-2 font-medium text-neutral-800 dark:text-neutral-100">
-              reservation #{reservationId ?? '-'}
-              {paymentOutcome === 'PENDING'
-                ? ` · 현재 단계 진행 ${paymentStartedMs == null ? queueElapsedSec : paymentFinishedMs == null ? processingElapsedSec : settlementElapsedSec}초`
-                : ` · 총 ${totalElapsedSec}초`}
-            </div>
-            <div className="space-y-1.5 text-neutral-700 dark:text-neutral-200">
-              <div>
-                1) 예약 확정(HELD): {reservedMs ? '완료' : '대기'} {reservedMs ? '(0초)' : ''}
+              <div className="mb-2 font-medium text-neutral-800 dark:text-neutral-100">
+                reservation #{reservationId ?? '-'}
+                {paymentOutcome === 'PENDING'
+                  ? ` · 현재 단계 진행 ${paymentStartedMs == null ? queueElapsedSec : paymentFinishedMs == null ? processingElapsedSec : settlementElapsedSec}초`
+                  : ` · 총 ${totalElapsedSec}초`}
               </div>
-              <div>
-                2) 결제 워커 큐 대기:{' '}
-                {paymentStartedMs == null ? `진행중 (${queueElapsedSec}초)` : `완료 (${queueElapsedSec}초)`}
+              <div className="space-y-1.5 text-neutral-700 dark:text-neutral-200">
+                <div>
+                  1) 예약 확정(HELD): {reservedMs ? '완료' : '대기'} {reservedMs ? '(0초)' : ''}
+                </div>
+                <div>
+                  2) 결제 워커 큐 대기:{' '}
+                  {paymentStartedMs == null
+                    ? `진행중 (${queueElapsedSec}초)`
+                    : `완료 (${queueElapsedSec}초)`}
+                </div>
+                <div>
+                  3) 결제 시뮬레이션 처리:{' '}
+                  {paymentStartedMs == null
+                    ? '대기 (0초)'
+                    : paymentFinishedMs == null
+                      ? `진행중 (${processingElapsedSec}초)`
+                      : `완료 (${processingElapsedSec}초)`}
+                </div>
+                <div>
+                  4) 결과 반영:{' '}
+                  {paymentFinishedMs == null
+                    ? '대기 (0초)'
+                    : paymentOutcome === 'PENDING'
+                      ? `진행중 (${settlementElapsedSec}초)`
+                      : paymentSucceeded
+                        ? `성공 반영 완료 (${settlementElapsedSec}초)`
+                        : `실패 롤백 완료 (${settlementElapsedSec}초)`}
+                </div>
               </div>
-              <div>
-                3) 결제 시뮬레이션 처리:{' '}
-                {paymentStartedMs == null
-                  ? '대기 (0초)'
-                  : paymentFinishedMs == null
-                    ? `진행중 (${processingElapsedSec}초)`
-                    : `완료 (${processingElapsedSec}초)`}
-              </div>
-              <div>
-                4) 결과 반영:{' '}
-                {paymentFinishedMs == null
-                  ? '대기 (0초)'
-                  : paymentOutcome === 'PENDING'
-                    ? `진행중 (${settlementElapsedSec}초)`
-                    : paymentSucceeded
-                      ? `성공 반영 완료 (${settlementElapsedSec}초)`
-                      : `실패 롤백 완료 (${settlementElapsedSec}초)`}
-              </div>
-            </div>
-            {progress?.paymentStatus && (
-              <div className="mt-3 text-xs text-neutral-600 dark:text-neutral-300">
-                paymentStatus={progress.paymentStatus}
-                {progress.failureCode ? ` · failureCode=${progress.failureCode}` : ''}
-              </div>
-            )}
+              {progress?.paymentStatus && (
+                <div className="mt-3 text-xs text-neutral-600 dark:text-neutral-300">
+                  paymentStatus={progress.paymentStatus}
+                  {progress.failureCode ? ` · failureCode=${progress.failureCode}` : ''}
+                </div>
+              )}
             </div>
           </LiquidGlassPanel>
         )}

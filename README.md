@@ -11,7 +11,9 @@ docker compose up --build
 - 프론트: [http://localhost](http://localhost) (nginx → API·WebSocket 프록시)
 - API 직접: [http://localhost:8080](http://localhost:8080)
 - Prometheus: [http://localhost:9090](http://localhost:9090)
+- Grafana: [http://localhost/grafana](http://localhost/grafana) (admin/admin)
 - RabbitMQ 관리: [http://localhost:15672](http://localhost:15672) (guest/guest)
+- nGrinder: [http://localhost:9080](http://localhost:9080) (admin/admin)
 
 첫 실행 시 시드 데이터로 공연 1건·좌석 100석이 생성됩니다. 회원가입 후 로그인하거나, 데모 계정으로 등록해 사용할 수 있습니다.
 
@@ -20,6 +22,11 @@ docker compose up --build
 1. MySQL·Redis·Kafka·RabbitMQ를 띄우거나 `docker compose up mysql redis zookeeper kafka rabbitmq` 만 실행  
 2. 백엔드: `cd backend && mvn spring-boot:run` (JDK 21, Maven 필요)  
 3. 프론트: `cd frontend && npm install && npm run dev` — Vite 프록시가 `/api`, `/ws`를 `localhost:8080`으로 넘깁니다.
+
+### Redis
+
+- Docker 기본 구성은 **Redis Cluster(6노드)** 입니다. 백엔드는 `SPRING_PROFILES_ACTIVE=redis-cluster`로 동작합니다.
+- IDE 로컬 개발에서 단일 Redis를 쓰려면 `SPRING_PROFILES_ACTIVE`를 지정하지 않고(기본 `application.yml`), `localhost:6379` Redis를 실행하세요.
 
 ## 아키텍처 요약
 

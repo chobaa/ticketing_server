@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ticketing.ngrinder.NgrinderClient;
+import com.ticketing.ngrinder.NgrinderPaymentCountRunner;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,6 +24,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class NgrinderDashboardController {
     private final NgrinderClient ngrinderClient;
+    private final NgrinderPaymentCountRunner paymentCountRunner;
 
     @Value("${ticketing.ngrinder.target-base-url:http://host.docker.internal:8080}")
     private String defaultTargetBaseUrl;
@@ -238,6 +240,180 @@ public class NgrinderDashboardController {
 
         body.put("param", param.toString());
         JsonNode created = ngrinderClient.createTest(body);
+        return ResponseEntity.ok(created);
+    }
+
+    /**
+     * Start a single "payment-count" test:
+     * - user only specifies how many payments to generate
+     * - backend stops the test automatically when (payment success + failure) delta reaches target
+     */
+    @PostMapping("/payments/start")
+    public ResponseEntity<JsonNode> startPaymentCountTest(
+            @RequestParam int paymentCount,
+            @RequestParam(required = false) String baseUrl) {
+        if (paymentCount < 1) {
+            ObjectNode err = JsonNodeFactory.instance.objectNode();
+            err.put("error", "paymentCount must be >= 1");
+            return ResponseEntity.badRequest().body(err);
+        }
+        if (baseUrl == null || baseUrl.isBlank()) {
+            baseUrl = defaultTargetBaseUrl;
+        }
+
+        // Ensure script exists.
+        JsonNode scripts = ngrinderClient.listScripts();
+        JsonNode scriptArr =
+                (scripts != null && scripts.isArray())
+                        ? scripts
+                        : (scripts != null && scripts.has("value") ? scripts.get("value") : null);
+        boolean hasAnyScript = scriptArr != null && scriptArr.isArray() && scriptArr.size() > 0;
+        if (!hasAnyScript) {
+            ObjectNode err = JsonNodeFactory.instance.objectNode();
+            err.put("error", "nGrinder script repository is empty. Upload scripts first (prevents 'script should exist').");
+            err.put("hint", "Run: .\\\\load-tests\\\\ngrinder\\\\upload-scripts.ps1 -ControllerBaseUrl http://localhost:19080 -Username admin -Password admin");
+            return ResponseEntity.badRequest().body(err);
+        }
+
+        java.util.function.Function<String, String> scriptPath =
+                (String fileName) -> {
+                    if (scriptArr == null || !scriptArr.isArray()) return fileName;
+                    for (JsonNode s : scriptArr) {
+                        if (s != null && fileName.equals(s.path("fileName").asText(null))) {
+                            String p = s.path("path").asText(null);
+                            if (p != null && !p.isBlank()) return p;
+                        }
+                    }
+                    return fileName;
+                };
+
+        // Conservative defaults: keep pressure moderate, but allow reaching large counts.
+        int vusers = 30;
+        int threads = 30;
+        int seats = Math.max(200, paymentCount * 2);
+        int seatPool = Math.min(20, Math.max(1, seats));
+
+        // Run long enough; script will finish early once paymentTarget is reached.
+        long durationMs = Math.min(60 * 60 * 1000L, Math.max(5 * 60 * 1000L, (long) paymentCount * 1500L));
+        int testDurationSec = (int) Math.min(3600, Math.max(120, (durationMs / 1000L) - 5));
+
+        ObjectNode body = JsonNodeFactory.instance.objectNode();
+        String now = LocalDateTime.now().toString();
+        body.put("status", "READY");
+        body.put("agentCount", 1);
+        body.put("processes", 1);
+        body.put("samplingInterval", 1);
+        body.put("duration", durationMs);
+        // Avoid controller-side auto stop (e.g., "Too low TPS") while we do deterministic request counting.
+        body.put("ignoreTooManyError", true);
+        body.put("threshold", "A");
+        body.put("threads", threads);
+        body.put("vuserPerAgent", vusers);
+        body.put("testName", "결제 " + paymentCount + "건 완료까지 " + now);
+        body.put("scriptName", scriptPath.apply("05_all_in_one.groovy"));
+
+        StringBuilder param = new StringBuilder();
+        param.append("baseUrl=").append(baseUrl).append(";");
+        param.append("eventSeatCount=").append(seats).append(";");
+        param.append("seatPoolSize=").append(seatPool).append(";");
+        param.append("testDurationSec=").append(testDurationSec).append(";");
+        param.append("admissionMaxWaitSec=30;");
+        param.append("paymentTarget=").append(paymentCount).append(";");
+        body.put("param", param.toString());
+
+        JsonNode created = ngrinderClient.createTest(body);
+        long id = created == null ? -1 : created.path("id").asLong(-1);
+        if (id > 0) {
+            // Safety stop only (in case of hang). Primary termination is script-driven by paymentTarget.
+            paymentCountRunner.stopOnTimeout(id, durationMs + 60_000L);
+        }
+        return ResponseEntity.ok(created);
+    }
+
+    /**
+     * Start a deterministic "request-count" test:
+     * - issues exactly requestCount reserve requests (best-effort exact, no overshoot by script slots)
+     * - then the script finishes immediately (no need to wait full duration)
+     */
+    @PostMapping("/requests/start")
+    public ResponseEntity<JsonNode> startRequestCountTest(
+            @RequestParam int requestCount,
+            @RequestParam(required = false) String baseUrl) {
+        if (requestCount < 1) {
+            ObjectNode err = JsonNodeFactory.instance.objectNode();
+            err.put("error", "requestCount must be >= 1");
+            return ResponseEntity.badRequest().body(err);
+        }
+        if (baseUrl == null || baseUrl.isBlank()) {
+            baseUrl = defaultTargetBaseUrl;
+        }
+
+        JsonNode scripts = ngrinderClient.listScripts();
+        JsonNode scriptArr =
+                (scripts != null && scripts.isArray())
+                        ? scripts
+                        : (scripts != null && scripts.has("value") ? scripts.get("value") : null);
+        boolean hasAnyScript = scriptArr != null && scriptArr.isArray() && scriptArr.size() > 0;
+        if (!hasAnyScript) {
+            ObjectNode err = JsonNodeFactory.instance.objectNode();
+            err.put("error", "nGrinder script repository is empty. Upload scripts first (prevents 'script should exist').");
+            err.put("hint", "Run: .\\\\load-tests\\\\ngrinder\\\\upload-scripts.ps1 -ControllerBaseUrl http://localhost:19080 -Username admin -Password admin");
+            return ResponseEntity.badRequest().body(err);
+        }
+
+        java.util.function.Function<String, String> scriptPath =
+                (String fileName) -> {
+                    if (scriptArr == null || !scriptArr.isArray()) return fileName;
+                    for (JsonNode s : scriptArr) {
+                        if (s != null && fileName.equals(s.path("fileName").asText(null))) {
+                            String p = s.path("path").asText(null);
+                            if (p != null && !p.isBlank()) return p;
+                        }
+                    }
+                    return fileName;
+                };
+
+        int vusers = 30;
+        int threads = 30;
+        int seats = Math.max(200, requestCount * 2);
+        int seatPool = Math.min(20, Math.max(1, seats));
+
+        // IMPORTANT:
+        // Use RUN-COUNT mode (threshold=R) so the script is executed once per thread.
+        // In duration mode (threshold=D), once requestTarget is reached the script becomes idle,
+        // which can trigger controller-side "Too low TPS" auto-stop.
+        long durationMs = 5 * 60 * 1000L; // safety net only
+        int testDurationSec = 295; // safety net only
+
+        ObjectNode body = JsonNodeFactory.instance.objectNode();
+        String now = LocalDateTime.now().toString();
+        body.put("status", "READY");
+        body.put("agentCount", 1);
+        body.put("processes", 1);
+        body.put("samplingInterval", 1);
+        body.put("duration", durationMs);
+        body.put("ignoreTooManyError", true);
+        body.put("threshold", "R");
+        body.put("runCount", 1);
+        body.put("threads", threads);
+        body.put("vuserPerAgent", vusers);
+        body.put("testName", "요청 " + requestCount + "건 (reserve) " + now);
+        body.put("scriptName", scriptPath.apply("05_all_in_one.groovy"));
+
+        StringBuilder param = new StringBuilder();
+        param.append("baseUrl=").append(baseUrl).append(";");
+        param.append("eventSeatCount=").append(seats).append(";");
+        param.append("seatPoolSize=").append(seatPool).append(";");
+        param.append("testDurationSec=").append(testDurationSec).append(";");
+        param.append("admissionMaxWaitSec=30;");
+        param.append("requestTarget=").append(requestCount).append(";");
+        body.put("param", param.toString());
+
+        JsonNode created = ngrinderClient.createTest(body);
+        long id = created == null ? -1 : created.path("id").asLong(-1);
+        if (id > 0) {
+            paymentCountRunner.stopOnTimeout(id, durationMs + 60_000L);
+        }
         return ResponseEntity.ok(created);
     }
 

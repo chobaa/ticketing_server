@@ -70,6 +70,7 @@ class AllInOneScenario {
     static String baseUrl
     static String adminEmail
     static String adminPassword
+    static String adminBearer
 
     static Long eventId
     static List<Long> seatIds = []
@@ -136,6 +137,16 @@ class AllInOneScenario {
         paymentTarget = paramInt("paymentTarget", "0")
         // If provided (>0), stop naturally when reserve requests issued reach this count.
         requestTarget = paramInt("requestTarget", "0")
+
+        // Reset cross-process counters in case nGrinder reuses JVM across tests.
+        reserveAttempted.set(0)
+        reserveSucceeded.set(0)
+        cancelSucceeded.set(0)
+        wrongSeatCount.set(0)
+        reserveIssued.set(0)
+        paymentTerminalCount.set(0)
+        paymentCountedReservationIds.clear()
+        activeSeatToReservation.clear()
     }
 
     @BeforeThread
@@ -205,8 +216,13 @@ class AllInOneScenario {
             Long reservationId = reserveOnce(chosenSeatId, admissionTokenCached)
             if (reservationId != null) {
                 if (requestTarget > 0) {
-                    // requestTarget mode: only issue reserve requests and finish (do not wait/cancel).
-                    // This keeps request count deterministic and avoids extending runtime.
+                    // requestTarget mode: make each issued reservation "complete" quickly so
+                    // (a) seats are reusable and we can reach large request counts, and
+                    // (b) we exercise the end-to-end flow (reserve -> cancel -> seat available).
+                    verifyProgressUntil(reservationId, ["PENDING_PAYMENT", "CONFIRMED", "CANCELED"])
+                    cancelReservation(reservationId)
+                    verifyProgressUntil(reservationId, ["CANCELED"])
+                    verifySeatAvailable(chosenSeatId)
                 } else if (paymentTarget > 0) {
                     // Payment-target mode: DO NOT cancel.
                     // Wait until the reservation reaches a terminal outcome and count it.
@@ -239,6 +255,8 @@ class AllInOneScenario {
                     reserveSucceeded.get()
             )
             assertThat(reserveIssued.get(), is(greaterThanOrEqualTo(requestTarget)))
+            // IMPORTANT: do NOT delete the event automatically here.
+            // Reservation triggers async payment pipeline; deleting immediately can break FK integrity.
             return
         }
         if (paymentTarget > 0) {
@@ -252,6 +270,9 @@ class AllInOneScenario {
             )
             // In paymentTarget mode, prioritize finishing N terminal outcomes.
             assertThat(paymentTerminalCount.get(), is(greaterThanOrEqualTo(paymentTarget)))
+            // IMPORTANT: do NOT delete the event automatically here.
+            // Payment is processed asynchronously (Kafka -> Rabbit -> worker -> DB).
+            // If we delete reservations/seats immediately, payment workers can fail with FK violations.
             return
         }
 
@@ -273,10 +294,13 @@ class AllInOneScenario {
 
         // 3) No leftover active seat lock from the test flow
         assertThat(activeSeatToReservation.size(), is(0))
+
+        teardownEvent()
     }
 
     private static void initEventAndSeats() {
         String token = registerOrLogin(adminEmail, adminPassword)
+        adminBearer = token
         Map<String, String> adminHeadersJson = [
                 "Authorization": "Bearer " + token,
                 "Content-Type" : "application/json"
@@ -314,6 +338,18 @@ class AllInOneScenario {
         def seatList = new JsonSlurper().parseText(seatsResp.getBodyText()) as List
         seatIds = seatList.collect { (it.id as long) }
         grinder.logger.info("AllInOneScenario init: eventId={} seats={}", eventId, seatIds.size())
+    }
+
+    private static void teardownEvent() {
+        if (eventId == null) return
+        if (adminBearer == null || adminBearer.isBlank()) return
+        try {
+            Map<String, String> headers = ["Authorization": "Bearer " + adminBearer]
+            HTTPResponse resp = setupRequest.DELETE(baseUrl + "/api/events/" + eventId, headers)
+            grinder.logger.info("teardownEvent: eventId={} status={}", eventId, resp == null ? -1 : resp.getStatusCode())
+        } catch (Exception e) {
+            grinder.logger.warn("teardownEvent failed: eventId={} err={}", eventId, e.getMessage())
+        }
     }
 
     private static String registerOrLogin(String email, String password) {

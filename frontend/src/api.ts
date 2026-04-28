@@ -67,6 +67,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  deleteEvent: (eventId: number) => reqEmpty(`/api/events/${eventId}`, { method: 'DELETE' }),
   seats: (eventId: number) => req<SeatDto[]>(`/api/events/${eventId}/seats`, { skipAuth: true }),
   joinQueue: (eventId: number) =>
     req<{
@@ -99,7 +100,10 @@ export const api = {
 
   dashboardStatus: () => req<DashboardStatusDto>(`/api/dashboard/status`),
   dashboardPing: () => req<{ time: string }>(`/api/dashboard/ping`),
-  dashboardRealtime: () => req<{ time?: string; tps?: number; p99Latency?: number; queueDepth?: number }>(`/api/dashboard/realtime`),
+  dashboardRealtime: () =>
+    req<{ time?: string; tps?: number; p99Latency?: number; meanLatencyMs?: number; queueDepth?: number }>(
+      `/api/dashboard/realtime`,
+    ),
 
   /** Page index is 0-based (nGrinder / Spring Data). */
   ngrinderTests: (page = 0, size = 20) =>

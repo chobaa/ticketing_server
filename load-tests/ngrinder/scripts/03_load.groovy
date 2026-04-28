@@ -65,6 +65,7 @@ class LoadScenario {
     static String baseUrl
     static String adminEmail
     static String adminPassword
+    static String adminBearer
 
     static Long eventId
     static List<Long> seatIds = []
@@ -164,10 +165,13 @@ class LoadScenario {
         grinder.logger.info("LoadScenario summary: attempted={}, success={}", attemptedReserveCount.get(), successCount.get())
         // load test는 실패가 많아도 동작하지만, 최소 성공 1건은 기대
         assertThat(successCount.get(), is(greaterThan(0)))
+
+        teardownEvent()
     }
 
     private static void initEventAndSeats() {
         String token = registerOrLogin(adminEmail, adminPassword)
+        adminBearer = token
         Map<String, String> adminHeadersJson = [
                 "Authorization": "Bearer " + token,
                 "Content-Type" : "application/json"
@@ -204,6 +208,18 @@ class LoadScenario {
         def seatList = new JsonSlurper().parseText(seatsResp.getBodyText()) as List
         seatIds = seatList.collect { (it.id as long) }
         grinder.logger.info("LoadScenario init: eventId={} seatIds={}", eventId, seatIds.size())
+    }
+
+    private static void teardownEvent() {
+        if (eventId == null) return
+        if (adminBearer == null || adminBearer.isBlank()) return
+        try {
+            Map<String, String> headers = ["Authorization": "Bearer " + adminBearer]
+            HTTPResponse resp = setupRequest.DELETE(baseUrl + "/api/events/" + eventId, headers)
+            grinder.logger.info("teardownEvent: eventId={} status={}", eventId, resp == null ? -1 : resp.getStatusCode())
+        } catch (Exception e) {
+            grinder.logger.warn("teardownEvent failed: eventId={} err={}", eventId, e.getMessage())
+        }
     }
 
     private static String registerOrLogin(String email, String password) {

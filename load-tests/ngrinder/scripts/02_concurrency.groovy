@@ -65,6 +65,7 @@ class ConcurrencyScenario {
     static String baseUrl
     static String adminEmail
     static String adminPassword
+    static String adminBearer
 
     static Long eventId
     static Long targetSeatId
@@ -146,10 +147,13 @@ class ConcurrencyScenario {
         assertThat(successCount.get(), is(1))
         assertThat(successSeatIds.size(), is(1))
         assertThat(successSeatIds.containsKey(targetSeatId), is(true))
+
+        teardownEvent()
     }
 
     private static void initEventAndSeat() {
         String token = registerOrLogin(adminEmail, adminPassword)
+        adminBearer = token
         Map<String, String> adminHeadersJson = [
                 "Authorization": "Bearer " + token,
                 "Content-Type" : "application/json"
@@ -188,6 +192,19 @@ class ConcurrencyScenario {
         List<Long> seatIds = seatList.collect { (it.id as long) }
         targetSeatId = seatIds.get(0)
         grinder.logger.info("ConcurrencyScenario init: eventId={} targetSeatId={}", eventId, targetSeatId)
+    }
+
+    private static void teardownEvent() {
+        if (eventId == null) return
+        if (adminBearer == null || adminBearer.isBlank()) return
+        try {
+            Map<String, String> headers = ["Authorization": "Bearer " + adminBearer]
+            HTTPResponse resp = setupRequest.DELETE(baseUrl + "/api/events/" + eventId, headers)
+            // ignore 404 or any teardown errors (test results should still be reported)
+            grinder.logger.info("teardownEvent: eventId={} status={}", eventId, resp == null ? -1 : resp.getStatusCode())
+        } catch (Exception e) {
+            grinder.logger.warn("teardownEvent failed: eventId={} err={}", eventId, e.getMessage())
+        }
     }
 
     private static String registerOrLogin(String email, String password) {

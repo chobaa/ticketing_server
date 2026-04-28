@@ -306,7 +306,9 @@ public class NgrinderDashboardController {
         body.put("duration", durationMs);
         // Avoid controller-side auto stop (e.g., "Too low TPS") while we do deterministic request counting.
         body.put("ignoreTooManyError", true);
-        body.put("threshold", "A");
+        // Use RUN-COUNT mode to avoid idle periods being treated as "Too low TPS".
+        body.put("threshold", "R");
+        body.put("runCount", 1);
         body.put("threads", threads);
         body.put("vuserPerAgent", vusers);
         body.put("testName", "결제 " + paymentCount + "건 완료까지 " + now);

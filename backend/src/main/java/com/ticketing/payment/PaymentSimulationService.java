@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
+import com.ticketing.ticket.ReservationRepository;
 
 import java.time.Instant;
 import java.util.List;
@@ -27,6 +28,7 @@ public class PaymentSimulationService {
             new FailureReason("FRAUD_CHECK", "Fraud risk rule blocked payment"));
 
     private final PaymentRepository paymentRepository;
+    private final ReservationRepository reservationRepository;
     private final ReservationEventProducer reservationEventProducer;
     private final TransactionTemplate transactionTemplate;
 
@@ -45,6 +47,11 @@ public class PaymentSimulationService {
                 Boolean.TRUE.equals(
                         transactionTemplate.execute(
                                 status -> {
+                                    // If reservation row does not exist (stale/invalid async event), drop safely.
+                                    if (!reservationRepository.existsById(event.reservationId())) {
+                                        log.warn("Dropping payment request for missing reservationId={}", event.reservationId());
+                                        return false;
+                                    }
                                     if (paymentRepository.findByReservationId(event.reservationId()).isPresent()) {
                                         return false;
                                     }

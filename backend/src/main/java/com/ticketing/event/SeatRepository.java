@@ -13,6 +13,10 @@ public interface SeatRepository extends JpaRepository<Seat, Long> {
 
     List<Seat> findByEventId(Long eventId);
 
+    long countByStatus(String status);
+
+    void deleteByEventId(Long eventId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM Seat s WHERE s.id = :id")
     Optional<Seat> findByIdForUpdate(@Param("id") Long id);

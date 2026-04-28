@@ -22,7 +22,7 @@ PowerShell에서 아래 스크립트를 1회 실행해 업로드하세요:
 
 ```powershell
 cd C:\Users\Chobaa\Desktop\ticketing_server
-.\load-tests\ngrinder\upload-scripts.ps1 -ControllerBaseUrl http://localhost:9080 -Username admin -Password admin
+.\load-tests\ngrinder\upload-scripts.ps1 -ControllerBaseUrl http://localhost:19080 -Username admin -Password admin
 ```
 
 ## 스크립트 타깃

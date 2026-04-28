@@ -25,6 +25,8 @@ export function UserDashboard() {
   const [pingMs, setPingMs] = useState<number | null>(null)
   const pingMsRef = useRef<number | null>(null)
   const [pingSeries, setPingSeries] = useState<SparkPoint[]>([])
+  const [settledTotal, setSettledTotal] = useState<number | null>(null)
+  const [settledSeries, setSettledSeries] = useState<SparkPoint[]>([])
   const [rtMode, setRtMode] = useState<'ws' | 'http'>('ws')
 
   useEffect(() => {
@@ -100,6 +102,38 @@ export function UserDashboard() {
 
   useEffect(() => {
     let cancelled = false
+    const pullSettled = async () => {
+      try {
+        const bm = await api.dashboardBusinessMetrics()
+        if (cancelled) return
+        const s =
+          bm.paymentSettledTotal ??
+          (typeof bm.paymentSucceededTotal === 'number' || typeof bm.paymentFailedTotal === 'number'
+            ? (bm.paymentSucceededTotal ?? 0) + (bm.paymentFailedTotal ?? 0)
+            : null)
+        if (typeof s === 'number' && Number.isFinite(s)) {
+          setSettledTotal(Math.round(s))
+          const t = new Date().toLocaleTimeString()
+          setSettledSeries((prev) => [...prev, { time: t, value: s }].slice(-60))
+        }
+      } catch {
+        if (!cancelled) {
+          setSettledTotal(null)
+          const t = new Date().toLocaleTimeString()
+          setSettledSeries((prev) => [...prev, { time: t, value: null }].slice(-60))
+        }
+      }
+    }
+    void pullSettled()
+    const settledTimer = window.setInterval(pullSettled, 2000)
+    return () => {
+      cancelled = true
+      window.clearInterval(settledTimer)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
     const ping = async () => {
       const st = performance.now()
       try {
@@ -129,10 +163,6 @@ export function UserDashboard() {
   }, [])
 
   const last = data[data.length - 1]
-  const sparkThroughput = useMemo<SparkPoint[]>(
-    () => data.map((p) => ({ time: p.time, value: p.tps })),
-    [data],
-  )
   const sparkMean = useMemo<SparkPoint[]>(
     () => data.map((p) => ({ time: p.time, value: p.meanLatencyMs })),
     [data],
@@ -144,7 +174,7 @@ export function UserDashboard() {
         <div>
           <div className="text-lg font-semibold text-neutral-800 dark:text-neutral-100">대시보드</div>
           <div className="text-xs text-neutral-500 dark:text-neutral-400">
-            Ping · Throughput · 평균 응답 시간만 추적합니다.
+            Ping · 정산(settled) · 평균 응답 시간을 추적합니다.
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -169,12 +199,12 @@ export function UserDashboard() {
           unit="ms"
         />
         <MetricCard
-          title="Throughput"
-          value={last ? `${Math.max(0, Math.round(last.tps * 60))} tpm` : '—'}
-          sub="최근 60초"
-          data={sparkThroughput}
+          title="정산(settled)"
+          value={settledTotal != null ? `${settledTotal} 건` : '—'}
+          sub="성공+실패 누적"
+          data={settledSeries}
           stroke="#22C55E"
-          unit="tpm"
+          unit="건"
         />
         <MetricCard
           title="평균 응답 시간"
@@ -339,13 +369,6 @@ type PerfPoint = {
   tps: number | null
 }
 
-type CountPoint = {
-  x: string
-  success: number | null
-  fail: number | null
-  total: number | null
-}
-
 type BizPoint = {
   x: string
   requested: number | null
@@ -395,7 +418,6 @@ function NgrinderLoadTestPanel() {
   const [testId, setTestId] = useState<number | null>(null)
   const [status, setStatus] = useState<NgrinderStatusResponse | null>(null)
   const [perf, setPerf] = useState<NgrinderPerfResponse | null>(null)
-  const [countsSeries, setCountsSeries] = useState<CountPoint[]>([])
   const [bizSeries, setBizSeries] = useState<BizPoint[]>([])
   const [logsCollected, setLogsCollected] = useState(false)
   const [logsCollecting, setLogsCollecting] = useState(false)
@@ -486,7 +508,6 @@ function NgrinderLoadTestPanel() {
       setTestId(id)
       setStatus(null)
       setPerf(null)
-      setCountsSeries([])
       setBizSeries([])
       setLogsCollected(false)
       setLogsCollecting(false)
@@ -515,28 +536,6 @@ function NgrinderLoadTestPanel() {
   const statusText = status?.message ? stripStatusMessage(status.message) : ''
   const statusCounts = useMemo(() => parseStatusCounts(statusText), [statusText])
   const finished = status?.status?.name === 'FINISHED'
-
-  // Build success/fail/total time series from status.message.
-  useEffect(() => {
-    if (!testId) return
-    if (statusCounts.success == null && statusCounts.fail == null) return
-    const now = new Date().toLocaleTimeString()
-    const success = statusCounts.success
-    const fail = statusCounts.fail
-    const total = success != null || fail != null ? (success ?? 0) + (fail ?? 0) : null
-    setCountsSeries((prev) => {
-      const lastPt = prev[prev.length - 1]
-      if (
-        lastPt &&
-        lastPt.success === success &&
-        lastPt.fail === fail &&
-        lastPt.total === total
-      ) {
-        return prev
-      }
-      return [...prev, { x: now, success, fail, total }].slice(-180)
-    })
-  }, [testId, statusCounts.success, statusCounts.fail])
 
   // Define "test end" as: FINISHED status + logs endpoint successfully fetched at least once.
   useEffect(() => {
@@ -686,28 +685,6 @@ function NgrinderLoadTestPanel() {
             sub="서버 메트릭 기준(이번 테스트 증가분)"
             tone="red"
           />
-        </div>
-
-        <div className="mt-3 min-h-[12rem] w-full rounded-xl border border-white/15 bg-white/5 p-2 dark:bg-black/20">
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={countsSeries} margin={{ top: 8, right: 10, left: 6, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.2)" vertical={false} />
-              <XAxis dataKey="x" stroke="rgba(163,163,163,0.8)" tick={{ fontSize: 11, fontFamily: 'Inter' }} />
-              <YAxis stroke="rgba(163,163,163,0.8)" tick={{ fontSize: 11, fontFamily: 'Inter' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.85)',
-                  backdropFilter: 'blur(8px)',
-                  borderRadius: '12px',
-                  border: '1px solid rgba(255,255,255,0.4)',
-                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                }}
-              />
-              <Line type="monotone" dataKey="success" name="Success" stroke="#22C55E" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="fail" name="Fail" stroke="#FF3B30" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="total" name="Total" stroke="#007AFF" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
         </div>
 
         <div className="mt-3 min-h-[12rem] w-full rounded-xl border border-white/15 bg-white/5 p-2 dark:bg-black/20">

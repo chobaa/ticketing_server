@@ -34,6 +34,12 @@ public class ReservationSettlementService {
         Seat seat = seatRepository
                 .findByIdForUpdate(reservation.getSeatId())
                 .orElseThrow(() -> new IllegalArgumentException("Seat not found"));
+        // Only allow SUCCESS settlement from the expected in-flight state.
+        // This prevents late/duplicate payment events from resurrecting canceled/expired reservations.
+        if (!"PENDING_PAYMENT".equalsIgnoreCase(reservation.getStatus()) || !"HELD".equalsIgnoreCase(seat.getStatus())) {
+            businessMetrics.incPaymentSettleSkippedAlreadyTerminal();
+            return;
+        }
         if ("CONFIRMED".equalsIgnoreCase(reservation.getStatus()) && "SOLD".equalsIgnoreCase(seat.getStatus())) {
             businessMetrics.incPaymentSettleSkippedAlreadyTerminal();
             return;
@@ -47,14 +53,25 @@ public class ReservationSettlementService {
         businessMetrics.incPaymentSucceeded();
     }
 
+    /**
+     * Roll back reservation/seat after a payment failure event (Kafka) or other payment-terminal failure.
+     * When {@code countTowardPaymentFailedMetric} is false (e.g. user cancel before/during payment), we do not
+     * increment {@code ticketing.payment.failed.total} so it stays aligned with the payment-requested pipeline.
+     */
     @Transactional
-    public void settleFailure(Long reservationId, String reason) {
+    public void settleFailure(Long reservationId, String reason, boolean countTowardPaymentFailedMetric) {
         Reservation reservation = reservationRepository
                 .findByIdForUpdate(reservationId)
                 .orElseThrow(() -> new IllegalArgumentException("Reservation not found"));
         Seat seat = seatRepository
                 .findByIdForUpdate(reservation.getSeatId())
                 .orElseThrow(() -> new IllegalArgumentException("Seat not found"));
+        // For payment-failure settlement, only roll back if it was still in-flight.
+        // If user already canceled (or it was already terminal), treat as duplicate/late event.
+        if (!"PENDING_PAYMENT".equalsIgnoreCase(reservation.getStatus()) || !"HELD".equalsIgnoreCase(seat.getStatus())) {
+            businessMetrics.incPaymentSettleSkippedAlreadyTerminal();
+            return;
+        }
         if ("CANCELED".equalsIgnoreCase(reservation.getStatus()) && "AVAILABLE".equalsIgnoreCase(seat.getStatus())) {
             businessMetrics.incPaymentSettleSkippedAlreadyTerminal();
             return;
@@ -64,7 +81,9 @@ public class ReservationSettlementService {
         reservationRepository.save(reservation);
         seatRepository.save(seat);
         seatViewCacheService.invalidate(reservation.getEventId());
-        businessMetrics.incPaymentFailed();
+        if (countTowardPaymentFailedMetric) {
+            businessMetrics.incPaymentFailed();
+        }
 
         reservationEventProducer.publishTicketCanceled(new TicketCanceledEvent(
                 reservation.getId(),
@@ -75,4 +94,5 @@ public class ReservationSettlementService {
                 Instant.now()));
         log.info("Rolled back reservationId={} reason={}", reservationId, reason);
     }
+
 }

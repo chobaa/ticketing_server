@@ -1,6 +1,7 @@
 package com.ticketing.api;
 
 import com.ticketing.metrics.MetricsSnapshotService;
+import com.ticketing.payment.PaymentRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,8 @@ public class DashboardRealtimeController {
     private final MetricsSnapshotService metricsSnapshotService;
     private final MeterRegistry meterRegistry;
     private final com.ticketing.payment.PaymentQueueMaintenanceService paymentQueueMaintenanceService;
+    private final PaymentRepository paymentRepository;
+    private final com.ticketing.metrics.IntegrityRepairService integrityRepairService;
 
     /** HTTP fallback for real-time snapshot when WebSocket isn't available. */
     @GetMapping("/realtime")
@@ -41,16 +44,24 @@ public class DashboardRealtimeController {
         // 큐대기: rabbit queue depth (not yet consumed by worker)
         double queueDepth = gauge("ticketing.payment.queue.depth");
 
-        // worker sleep: payments currently PROCESSING (includes simulation dwell)
-        double processing = gauge("ticketing_integrity_payments_processing");
+        // Live DB count (scheduled integrity gauge can lag seconds behind counters during load).
+        double processing = paymentRepository.countByStatus("PROCESSING");
 
-        // When "requested" means "issued to worker queue", this should stay ~0:
-        // requested ≈ (success + fail) + processing + queueDepth + dropped + duplicate + settleAlreadyTerminal
+        // If the pipeline is consistent, this should represent work-in-progress (WIP):
+        // wip = requested - (success + fail + dropped + duplicate)
+        double wipFromCounters = requested - (succeeded + failed + dropped + duplicate);
+
+        // When "requested" means "issued to worker queue", this should stay ~0 once we account for WIP:
+        // requested ≈ (success + fail) + (processing + queueDepth) + dropped + duplicate
+        // Do NOT add settleAlreadyTerminal: it counts duplicate Kafka settlement deliveries that do not
+        // correspond to an extra bridge "requested" tick (same logical payment).
         double expectedRequested =
-                (succeeded + failed) + processing + queueDepth + dropped + duplicate + settleAlreadyTerminal;
+                (succeeded + failed) + processing + queueDepth + dropped + duplicate;
         double mismatch = requested - expectedRequested;
 
         double inflight = Math.max(0.0, processing + queueDepth);
+        // Should match (processing + queueDepth + unacked) when counters and gauges align.
+        double wipDerived = wipFromCounters;
         double sleepMsTotal = counter("ticketing.payment.worker.sleep.ms.total");
 
         m.put("paymentRequestedTotal", requested);
@@ -65,11 +76,31 @@ public class DashboardRealtimeController {
         m.put("paymentSettleSkippedAlreadyTerminalTotal", settleAlreadyTerminal);
         m.put("paymentRequestedExpectedTotal", expectedRequested);
         m.put("paymentRequestedMismatch", mismatch);
+        m.put("paymentWipFromCounters", wipFromCounters);
+        m.put("paymentWipDerived", Math.max(0.0, wipDerived));
+        m.put(
+                "paymentWipDerivedVsObserved",
+                Math.max(0.0, wipDerived) - Math.max(0.0, processing + queueDepth));
         // backwards compatibility for older frontend fields
         m.put("paymentWorkersSleeping", 0.0);
         m.put("paymentWorkerSleepMsTotal", sleepMsTotal);
         m.put("time", java.time.Instant.now().toString());
         return ResponseEntity.ok(m);
+    }
+
+    @org.springframework.web.bind.annotation.PostMapping("/integrity/repair-seats")
+    public ResponseEntity<Map<String, Object>> repairSeatStatus() {
+        Map<String, Object> out = new LinkedHashMap<>(integrityRepairService.repairSeatStatusFromReservations());
+        out.put("time", java.time.Instant.now().toString());
+        return ResponseEntity.ok(out);
+    }
+
+    @org.springframework.web.bind.annotation.PostMapping("/integrity/repair-processing-payments")
+    public ResponseEntity<Map<String, Object>> repairProcessingPayments() {
+        Map<String, Object> out =
+                new LinkedHashMap<>(integrityRepairService.repairStaleProcessingPayments());
+        out.put("time", java.time.Instant.now().toString());
+        return ResponseEntity.ok(out);
     }
 
     @org.springframework.web.bind.annotation.PostMapping("/payment-queue/purge")

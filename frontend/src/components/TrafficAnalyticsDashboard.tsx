@@ -346,6 +346,16 @@ type CountPoint = {
   total: number | null
 }
 
+type BizPoint = {
+  x: string
+  requested: number | null
+  settled: number | null
+  inflight: number | null
+  queue: number | null
+  sleeping: number | null
+  sleepMsTotal: number | null
+}
+
 function toPerfSeries(p: NgrinderPerfResponse): PerfPoint[] {
   const tps = p.TPS?.TPS ?? []
   const maxLen = tps.length
@@ -367,31 +377,77 @@ function stripStatusMessage(html: string): string {
     .trim()
 }
 
-function lastPerfPoint(series: PerfPoint[]): PerfPoint | undefined {
-  for (let i = series.length - 1; i >= 0; i--) {
-    const x = series[i]
-    if (x.tps != null) return x
-  }
-  return undefined
-}
-
 function NgrinderLoadTestPanel() {
-  const [requestCount, setRequestCount] = useState<number>(1000)
+  const [requestedTarget, setRequestedTarget] = useState<number>(200)
   const [actionBusy, setActionBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [biz, setBiz] = useState<{
+    paymentRequestedTotal?: number
+    paymentSucceededTotal?: number
+    paymentFailedTotal?: number
+    paymentSettledTotal?: number
+    paymentInflight?: number
+    paymentQueueDepth?: number
+    paymentWorkersSleeping?: number
+    paymentWorkerSleepMsTotal?: number
+  } | null>(null)
 
   const [testId, setTestId] = useState<number | null>(null)
   const [status, setStatus] = useState<NgrinderStatusResponse | null>(null)
   const [perf, setPerf] = useState<NgrinderPerfResponse | null>(null)
   const [countsSeries, setCountsSeries] = useState<CountPoint[]>([])
+  const [bizSeries, setBizSeries] = useState<BizPoint[]>([])
   const [logsCollected, setLogsCollected] = useState(false)
   const [logsCollecting, setLogsCollecting] = useState(false)
+  const [baselineRequested, setBaselineRequested] = useState<number | null>(null)
+  const [baselineSucceeded, setBaselineSucceeded] = useState<number | null>(null)
+  const [baselineFailed, setBaselineFailed] = useState<number | null>(null)
 
   const refresh = async (id: number) => {
     try {
-      const [st, pf] = await Promise.all([api.ngrinderStatus(id), api.ngrinderPerf(id, 'TPS', 900)])
+      const [st, pf, bm] = await Promise.all([
+        api.ngrinderStatus(id),
+        api.ngrinderPerf(id, 'TPS', 900),
+        api.dashboardBusinessMetrics().catch(() => null),
+      ])
       setStatus(st)
       setPerf(pf)
+      if (bm) {
+        setBiz({
+          paymentRequestedTotal: bm.paymentRequestedTotal,
+          paymentSucceededTotal: bm.paymentSucceededTotal,
+          paymentFailedTotal: bm.paymentFailedTotal,
+          paymentSettledTotal: bm.paymentSettledTotal,
+          paymentInflight: bm.paymentInflight,
+        })
+      }
+      if (bm) {
+        const now = new Date().toLocaleTimeString()
+        setBizSeries((prev) => {
+          const p: BizPoint = {
+            x: now,
+            requested: bm.paymentRequestedTotal ?? null,
+            settled: bm.paymentSettledTotal ?? null,
+            inflight: bm.paymentInflight ?? null,
+            queue: bm.paymentQueueDepth ?? null,
+            sleeping: bm.paymentWorkersSleeping ?? null,
+            sleepMsTotal: bm.paymentWorkerSleepMsTotal ?? null,
+          }
+          const last = prev[prev.length - 1]
+          if (
+            last &&
+            last.requested === p.requested &&
+            last.settled === p.settled &&
+            last.inflight === p.inflight &&
+            last.queue === p.queue &&
+            last.sleeping === p.sleeping &&
+            last.sleepMsTotal === p.sleepMsTotal
+          ) {
+            return prev
+          }
+          return [...prev, p].slice(-180)
+        })
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : '상태 조회 실패')
     }
@@ -405,18 +461,33 @@ function NgrinderLoadTestPanel() {
   }, [testId])
 
   const series = useMemo(() => (perf ? toPerfSeries(perf) : []), [perf])
-  const last = lastPerfPoint(series)
 
   const start = async () => {
     setActionBusy(true)
     setErr(null)
     try {
-      const created = await api.ngrinderStartRequestCount(Math.max(1, Math.floor(requestCount)))
+      // capture current settled total as baseline, so we can show delta during the test
+      const bm = await api.dashboardBusinessMetrics().catch(() => null)
+      const baseReq = bm?.paymentRequestedTotal ?? null
+      const baseSucc = bm?.paymentSucceededTotal ?? null
+      const baseFail = bm?.paymentFailedTotal ?? null
+      const base =
+        bm?.paymentSettledTotal ??
+        (bm?.paymentSucceededTotal != null || bm?.paymentFailedTotal != null
+          ? (bm?.paymentSucceededTotal ?? 0) + (bm?.paymentFailedTotal ?? 0)
+          : null)
+      void base
+      setBaselineRequested(typeof baseReq === 'number' && Number.isFinite(baseReq) ? baseReq : null)
+      setBaselineSucceeded(typeof baseSucc === 'number' && Number.isFinite(baseSucc) ? baseSucc : null)
+      setBaselineFailed(typeof baseFail === 'number' && Number.isFinite(baseFail) ? baseFail : null)
+
+      const created = await api.ngrinderStartPaymentRequestedCount(Math.max(1, Math.floor(requestedTarget)))
       const id = typeof created?.id === 'number' ? created.id : null
       setTestId(id)
       setStatus(null)
       setPerf(null)
       setCountsSeries([])
+      setBizSeries([])
       setLogsCollected(false)
       setLogsCollecting(false)
       if (id) await refresh(id)
@@ -489,11 +560,47 @@ function NgrinderLoadTestPanel() {
     }
   }, [testId, finished, logsCollected, logsCollecting])
 
-  const issued = Math.max(1, Math.floor(requestCount))
+  const issued = Math.max(1, Math.floor(requestedTarget))
   const success = statusCounts.success
   const fail = statusCounts.fail
   const settled = success != null || fail != null ? (success ?? 0) + (fail ?? 0) : null
-  const integrityOk = settled != null ? settled === issued : null
+  void issued
+
+  const paymentRequested = biz?.paymentRequestedTotal ?? null
+  const paymentSucceeded = biz?.paymentSucceededTotal ?? null
+  const paymentFailed = biz?.paymentFailedTotal ?? null
+  const paymentSettled =
+    biz?.paymentSettledTotal ??
+    (paymentSucceeded != null || paymentFailed != null ? (paymentSucceeded ?? 0) + (paymentFailed ?? 0) : null)
+  const paymentIntegrityOk =
+    paymentRequested != null && paymentSettled != null ? Math.round(paymentRequested) === Math.round(paymentSettled) : null
+
+  const paymentRequestedDelta =
+    paymentRequested != null && baselineRequested != null
+      ? Math.max(0, Math.round(paymentRequested - baselineRequested))
+      : null
+
+  const paymentSucceededDelta =
+    paymentSucceeded != null && baselineSucceeded != null
+      ? Math.max(0, Math.round(paymentSucceeded - baselineSucceeded))
+      : null
+
+  const paymentFailedDelta =
+    paymentFailed != null && baselineFailed != null
+      ? Math.max(0, Math.round(paymentFailed - baselineFailed))
+      : null
+
+  const paymentSettledDelta =
+    paymentSucceededDelta != null || paymentFailedDelta != null
+      ? (paymentSucceededDelta ?? 0) + (paymentFailedDelta ?? 0)
+      : null
+
+  const paymentInflightEstimateDelta =
+    paymentRequestedDelta != null && paymentSettledDelta != null
+      ? Math.max(0, paymentRequestedDelta - paymentSettledDelta)
+      : null
+
+  // payment success/fail delta are derived from separate baselines captured at test start.
 
   const avgTps = useMemo(() => {
     const xs = series.map((p) => p.tps).filter((x): x is number => typeof x === 'number' && Number.isFinite(x))
@@ -509,10 +616,10 @@ function NgrinderLoadTestPanel() {
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <h3 className="font-inter text-xl font-bold tracking-tight text-neutral-800 dark:text-white">
-                nGrinder 부하 테스트 (요청 개수 지정)
+                nGrinder 부하 테스트 (발행(requested) 건수 지정)
               </h3>
               <p className="mt-1 max-w-xl text-xs text-neutral-600 dark:text-neutral-300">
-                reserve 요청을 정확히 입력한 개수만큼 발생시키면 스크립트가 즉시 종료(FINISHED)합니다.
+                서버의 결제요청 발행(requested) 증가분이 목표치에 도달하면 종료됩니다. (정확히 N은 보장 어렵지만 N 근처에서 멈춤)
               </p>
               <a
                 className="mt-2 inline-block text-xs font-medium text-[#007AFF]"
@@ -526,17 +633,17 @@ function NgrinderLoadTestPanel() {
             <div className="flex flex-wrap items-center gap-2">
               <input
                 className="w-[10.5rem] rounded-xl border border-white/30 bg-white/40 px-3 py-2 text-sm text-neutral-900 outline-none backdrop-blur dark:bg-black/20 dark:text-white"
-                value={String(requestCount)}
-                onChange={(e) => setRequestCount(Number(e.target.value || 0))}
-                placeholder="요청 수"
+                value={String(requestedTarget)}
+                onChange={(e) => setRequestedTarget(Number(e.target.value || 0))}
+                placeholder="발행(requested) 수"
                 inputMode="numeric"
-                title="발생시킬 reserve 요청 수"
+                title="목표 발행(requested) 수"
               />
               <button
                 type="button"
                 className="rounded-xl bg-indigo-600/90 px-4 py-2 text-sm font-medium text-white shadow disabled:opacity-50"
                 onClick={() => void start()}
-                disabled={actionBusy || requestCount < 1}
+                disabled={actionBusy || requestedTarget < 1}
               >
                 실행
               </button>
@@ -561,17 +668,22 @@ function NgrinderLoadTestPanel() {
             sub="자동 종료까지 실행 중"
             tone={status?.status?.name === 'TESTING' ? 'green' : 'amber'}
           />
-          <StatusCard title="TPS" value={last?.tps != null ? String(last.tps) : '—'} sub="최근 구간" tone="blue" />
+          <StatusCard
+            title="Requested (Δ)"
+            value={paymentRequestedDelta != null ? String(paymentRequestedDelta) : '—'}
+            sub="서버 메트릭 기준(이번 테스트 증가분)"
+            tone="blue"
+          />
           <StatusCard
             title="성공"
-            value={statusCounts.success != null ? String(statusCounts.success) : '—'}
-            sub="nGrinder status message"
+            value={paymentSucceededDelta != null ? String(paymentSucceededDelta) : '—'}
+            sub="서버 메트릭 기준(이번 테스트 증가분)"
             tone="green"
           />
           <StatusCard
             title="실패"
-            value={statusCounts.fail != null ? String(statusCounts.fail) : '—'}
-            sub="nGrinder status message"
+            value={paymentFailedDelta != null ? String(paymentFailedDelta) : '—'}
+            sub="서버 메트릭 기준(이번 테스트 증가분)"
             tone="red"
           />
         </div>
@@ -598,6 +710,30 @@ function NgrinderLoadTestPanel() {
           </ResponsiveContainer>
         </div>
 
+        <div className="mt-3 min-h-[12rem] w-full rounded-xl border border-white/15 bg-white/5 p-2 dark:bg-black/20">
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={bizSeries} margin={{ top: 8, right: 10, left: 6, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.2)" vertical={false} />
+              <XAxis dataKey="x" stroke="rgba(163,163,163,0.8)" tick={{ fontSize: 11, fontFamily: 'Inter' }} />
+              <YAxis stroke="rgba(163,163,163,0.8)" tick={{ fontSize: 11, fontFamily: 'Inter' }} />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: 'rgba(255, 255, 255, 0.85)',
+                  backdropFilter: 'blur(8px)',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(255,255,255,0.4)',
+                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                }}
+              />
+              <Line type="monotone" dataKey="requested" name="requested(total)" stroke="#007AFF" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="settled" name="settled(total)" stroke="#22C55E" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="inflight" name="inflight" stroke="#A855F7" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="queue" name="queueDepth" stroke="#F59E0B" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="sleeping" name="sleepingWorkers" stroke="#FF3B30" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
         <MiniPanel title="요약 (테스트 종료 후)">
           {!finished ? (
             <div className="text-xs text-neutral-500 dark:text-neutral-400">테스트가 종료되면 요약을 표시합니다.</div>
@@ -609,18 +745,33 @@ function NgrinderLoadTestPanel() {
             <div className="grid gap-2 text-sm text-neutral-800 dark:text-neutral-200">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-                  정합성 여부
+                  HTTP 요청 결과 (nGrinder)
                 </div>
-                <div className={integrityOk === true ? 'text-emerald-600 dark:text-emerald-300' : integrityOk === false ? 'text-red-600 dark:text-red-300' : 'text-neutral-500 dark:text-neutral-400'}>
-                  {integrityOk === true ? 'OK' : integrityOk === false ? 'Mismatch' : '—'}
+                <div className="text-neutral-500 dark:text-neutral-400">결제건수와 1:1 비교 불가</div>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                  HTTP Success / HTTP Fail / HTTP Total
+                </div>
+                <div className="font-mono text-xs">
+                  {success ?? '—'} / {fail ?? '—'} / {settled ?? '—'}
+                </div>
+              </div>
+
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                  정합성 여부 (서버 결제정산)
+                </div>
+                <div className={paymentIntegrityOk === true ? 'text-emerald-600 dark:text-emerald-300' : paymentIntegrityOk === false ? 'text-red-600 dark:text-red-300' : 'text-neutral-500 dark:text-neutral-400'}>
+                  {paymentIntegrityOk === true ? 'OK' : paymentIntegrityOk === false ? 'Mismatch' : '—'}
                 </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-                  Issued / Success / Fail / (Success+Fail)
+                  paymentRequestedΔ / paymentSettledΔ / inflight(Δ, 추정)
                 </div>
                 <div className="font-mono text-xs">
-                  {issued} / {success ?? '—'} / {fail ?? '—'} / {settled ?? '—'}
+                  {paymentRequestedDelta ?? '—'} / {paymentSettledDelta ?? '—'} / {paymentInflightEstimateDelta ?? '—'}
                 </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3">

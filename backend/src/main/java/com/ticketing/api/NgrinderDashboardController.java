@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ticketing.ngrinder.NgrinderClient;
 import com.ticketing.ngrinder.NgrinderPaymentCountRunner;
+import com.ticketing.payment.PaymentQueueMaintenanceService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +26,7 @@ import java.util.List;
 public class NgrinderDashboardController {
     private final NgrinderClient ngrinderClient;
     private final NgrinderPaymentCountRunner paymentCountRunner;
+    private final PaymentQueueMaintenanceService paymentQueueMaintenanceService;
 
     @Value("${ticketing.ngrinder.target-base-url:http://host.docker.internal:8080}")
     private String defaultTargetBaseUrl;
@@ -251,6 +253,7 @@ public class NgrinderDashboardController {
     @PostMapping("/payments/start")
     public ResponseEntity<JsonNode> startPaymentCountTest(
             @RequestParam int paymentCount,
+            @RequestParam(defaultValue = "true") boolean resetPaymentQueue,
             @RequestParam(required = false) String baseUrl) {
         if (paymentCount < 1) {
             ObjectNode err = JsonNodeFactory.instance.objectNode();
@@ -259,6 +262,10 @@ public class NgrinderDashboardController {
         }
         if (baseUrl == null || baseUrl.isBlank()) {
             baseUrl = defaultTargetBaseUrl;
+        }
+
+        if (resetPaymentQueue) {
+            paymentQueueMaintenanceService.purgePaymentQueueReadyMessages();
         }
 
         // Ensure script exists.
@@ -326,7 +333,10 @@ public class NgrinderDashboardController {
         JsonNode created = ngrinderClient.createTest(body);
         long id = created == null ? -1 : created.path("id").asLong(-1);
         if (id > 0) {
-            // Safety stop only (in case of hang). Primary termination is script-driven by paymentTarget.
+            // Baseline for delta-based stop: if script doesn't terminate, stop by settled delta + inflight==0.
+            long baselineSettled = paymentCountRunner.currentSettledTotalRounded();
+            paymentCountRunner.stopWhenSettledReached(id, paymentCount, baselineSettled, durationMs + 60_000L);
+            // extra safety stop (in case of polling failures)
             paymentCountRunner.stopOnTimeout(id, durationMs + 60_000L);
         }
         return ResponseEntity.ok(created);
@@ -340,6 +350,7 @@ public class NgrinderDashboardController {
     @PostMapping("/requests/start")
     public ResponseEntity<JsonNode> startRequestCountTest(
             @RequestParam int requestCount,
+            @RequestParam(defaultValue = "true") boolean resetPaymentQueue,
             @RequestParam(required = false) String baseUrl) {
         if (requestCount < 1) {
             ObjectNode err = JsonNodeFactory.instance.objectNode();
@@ -348,6 +359,10 @@ public class NgrinderDashboardController {
         }
         if (baseUrl == null || baseUrl.isBlank()) {
             baseUrl = defaultTargetBaseUrl;
+        }
+
+        if (resetPaymentQueue) {
+            paymentQueueMaintenanceService.purgePaymentQueueReadyMessages();
         }
 
         JsonNode scripts = ngrinderClient.listScripts();
@@ -414,6 +429,99 @@ public class NgrinderDashboardController {
         JsonNode created = ngrinderClient.createTest(body);
         long id = created == null ? -1 : created.path("id").asLong(-1);
         if (id > 0) {
+            paymentCountRunner.stopOnTimeout(id, durationMs + 60_000L);
+        }
+        return ResponseEntity.ok(created);
+    }
+
+    /**
+     * Start a "payment-requested count" test:
+     * - generate traffic (reserve flow) continuously
+     * - stop the test when app metric ticketing.payment.requested.total delta reaches requestedCount
+     * This makes the test stop around the desired "발행량(requested)" count.
+     */
+    @PostMapping("/payment-requests/start")
+    public ResponseEntity<JsonNode> startPaymentRequestedCountTest(
+            @RequestParam int requestedCount,
+            @RequestParam(defaultValue = "true") boolean resetPaymentQueue,
+            @RequestParam(required = false) String baseUrl) {
+        if (requestedCount < 1) {
+            ObjectNode err = JsonNodeFactory.instance.objectNode();
+            err.put("error", "requestedCount must be >= 1");
+            return ResponseEntity.badRequest().body(err);
+        }
+        if (baseUrl == null || baseUrl.isBlank()) {
+            baseUrl = defaultTargetBaseUrl;
+        }
+
+        if (resetPaymentQueue) {
+            paymentQueueMaintenanceService.purgePaymentQueueReadyMessages();
+        }
+
+        JsonNode scripts = ngrinderClient.listScripts();
+        JsonNode scriptArr =
+                (scripts != null && scripts.isArray())
+                        ? scripts
+                        : (scripts != null && scripts.has("value") ? scripts.get("value") : null);
+        boolean hasAnyScript = scriptArr != null && scriptArr.isArray() && scriptArr.size() > 0;
+        if (!hasAnyScript) {
+            ObjectNode err = JsonNodeFactory.instance.objectNode();
+            err.put("error", "nGrinder script repository is empty. Upload scripts first (prevents 'script should exist').");
+            err.put("hint", "Run: .\\\\load-tests\\\\ngrinder\\\\upload-scripts.ps1 -ControllerBaseUrl http://localhost:19080 -Username admin -Password admin");
+            return ResponseEntity.badRequest().body(err);
+        }
+
+        java.util.function.Function<String, String> scriptPath =
+                (String fileName) -> {
+                    if (scriptArr == null || !scriptArr.isArray()) return fileName;
+                    for (JsonNode s : scriptArr) {
+                        if (s != null && fileName.equals(s.path("fileName").asText(null))) {
+                            String p = s.path("path").asText(null);
+                            if (p != null && !p.isBlank()) return p;
+                        }
+                    }
+                    return fileName;
+                };
+
+        int vusers = 30;
+        int threads = 30;
+        int seats = Math.max(200, requestedCount * 2);
+        int seatPool = Math.min(20, Math.max(1, seats));
+
+        // Keep the script running (duration mode) so it keeps generating traffic until backend stops it.
+        long durationMs = Math.min(60 * 60 * 1000L, Math.max(5 * 60 * 1000L, (long) requestedCount * 1500L));
+        int testDurationSec = (int) Math.min(3600, Math.max(120, (durationMs / 1000L) - 5));
+
+        ObjectNode body = JsonNodeFactory.instance.objectNode();
+        String now = LocalDateTime.now().toString();
+        body.put("status", "READY");
+        body.put("agentCount", 1);
+        body.put("processes", 1);
+        body.put("samplingInterval", 1);
+        body.put("duration", durationMs);
+        body.put("ignoreTooManyError", true);
+        body.put("threshold", "D");
+        body.put("threads", threads);
+        body.put("vuserPerAgent", vusers);
+        body.put("testName", "발행(requested) " + requestedCount + "건까지 " + now);
+        body.put("scriptName", scriptPath.apply("05_all_in_one.groovy"));
+
+        StringBuilder param = new StringBuilder();
+        param.append("baseUrl=").append(baseUrl).append(";");
+        param.append("eventSeatCount=").append(seats).append(";");
+        param.append("seatPoolSize=").append(seatPool).append(";");
+        param.append("testDurationSec=").append(testDurationSec).append(";");
+        param.append("admissionMaxWaitSec=30;");
+        // requestTarget/paymentTarget = 0 means "keep running until duration" (or backend stop)
+        param.append("requestTarget=0;");
+        param.append("paymentTarget=0;");
+        body.put("param", param.toString());
+
+        long baselineRequested = paymentCountRunner.currentRequestedTotalRounded();
+        JsonNode created = ngrinderClient.createTest(body);
+        long id = created == null ? -1 : created.path("id").asLong(-1);
+        if (id > 0) {
+            paymentCountRunner.stopWhenRequestedReached(id, requestedCount, baselineRequested, durationMs + 60_000L);
             paymentCountRunner.stopOnTimeout(id, durationMs + 60_000L);
         }
         return ResponseEntity.ok(created);

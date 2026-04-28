@@ -14,7 +14,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(ticketing_integrity_mismatch_held_vs_pending) + sum(ticketing_integrity_mismatch_sold_vs_confirmed) + sum(ticketing_integrity_mismatch_confirmed_vs_payment_success) + sum(ticketing_integrity_mismatch_canceled_vs_payment_failed)"
+          "expr": "sum(ticketing_integrity_mismatch_held_vs_pending) + sum(ticketing_integrity_mismatch_sold_vs_confirmed) + sum(ticketing_integrity_mismatch_confirmed_vs_payment_success) + sum(ticketing_integrity_mismatch_pending_vs_payment_processing)"
         }
       ],
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
@@ -38,7 +38,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "((round(sum(increase(ticketing_messaging_kafka_produced_total{topic=\"payment-requested\"}[$__range])))) or vector(0)) - (round(sum(increase(ticketing_payment_succeeded_total[$__range]))) + round(sum(increase(ticketing_payment_failed_total[$__range]))))"
+          "expr": "((round(sum(increase(ticketing_payment_requested_total[$__range])))) or vector(0)) - (round(sum(increase(ticketing_payment_succeeded_total[$__range]))) + round(sum(increase(ticketing_payment_failed_total[$__range]))))"
         }
       ],
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
@@ -89,22 +89,69 @@
         { "refId": "A", "expr": "sum(ticketing_integrity_mismatch_held_vs_pending)" },
         { "refId": "B", "expr": "sum(ticketing_integrity_mismatch_sold_vs_confirmed)" },
         { "refId": "C", "expr": "sum(ticketing_integrity_mismatch_confirmed_vs_payment_success)" },
-        { "refId": "D", "expr": "sum(ticketing_integrity_mismatch_canceled_vs_payment_failed)" }
+        { "refId": "D", "expr": "sum(ticketing_integrity_mismatch_pending_vs_payment_processing)" }
       ]
+    },
+    {
+      "type": "stat",
+      "title": "드롭+중복(구간)",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "round(sum(increase(ticketing_payment_request_dropped_missing_reservation_total[$__range])) + sum(increase(ticketing_payment_request_skipped_duplicate_total[$__range])))"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": [\"lastNotNull\"], \"fields\": \"\", \"values\": false } }
+    },
+    {
+      "type": "stat",
+      "title": "requested 정합성(mismatch)",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "round(\n  sum(increase(ticketing_payment_requested_total[$__range]))\n  - (\n    sum(increase(ticketing_payment_succeeded_total[$__range]))\n    + sum(increase(ticketing_payment_failed_total[$__range]))\n    + sum(increase(ticketing_payment_request_dropped_missing_reservation_total[$__range]))\n    + sum(increase(ticketing_payment_request_skipped_duplicate_total[$__range]))\n    + sum(increase(ticketing_payment_settle_skipped_already_terminal_total[$__range]))\n    + (\n      (sum(last_over_time(ticketing_integrity_payments_processing[$__range])) + sum(last_over_time(ticketing_payment_queue_depth[$__range])))\n      - (sum(min_over_time(ticketing_integrity_payments_processing[$__range])) + sum(min_over_time(ticketing_payment_queue_depth[$__range])))\n    )\n  )\n)"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": [\"lastNotNull\"], \"fields\": \"\", \"values\": false } }
     },
     {
       "type": "timeseries",
       "title": "발행 vs 정산(구간 누적)",
       "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
       "targets": [
-        { "refId": "A", "expr": "(round(sum(increase(ticketing_messaging_kafka_produced_total{topic=\"payment-requested\"}[$__range])))) or vector(0)", "legendFormat": "발행(issued)" },
-        { "refId": "B", "expr": "round(sum(increase(ticketing_payment_succeeded_total[$__range]) + increase(ticketing_payment_failed_total[$__range])))", "legendFormat": "정산(settled)" }
+        { "refId": "A", "expr": "(round(sum(increase(ticketing_payment_requested_total[$__range])))) or vector(0)", "legendFormat": "requested(발행)" },
+        { "refId": "B", "expr": "round(sum(increase(ticketing_payment_succeeded_total[$__range]) + increase(ticketing_payment_failed_total[$__range])))", "legendFormat": "settled(정산)" }
       ]
     },
     {
       "type": "timeseries",
+      "title": "결제 파이프라인: requested / settled / inflight",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 },
+      "targets": [
+        { "refId": "A", "expr": "sum(ticketing_payment_requested_total)", "legendFormat": "requested(issued_to_worker_queue,total)" },
+        { "refId": "B", "expr": "sum(ticketing_payment_succeeded_total) + sum(ticketing_payment_failed_total)", "legendFormat": "settled(total)=success+fail" },
+        { "refId": "C", "expr": "sum(ticketing_integrity_payments_processing)", "legendFormat": "worker_sleep(processing,current)" },
+        { "refId": "D", "expr": "sum(ticketing_payment_queue_depth)", "legendFormat": "queue_wait(rabbit_depth,current)" },
+        { "refId": "E", "expr": "sum(ticketing_payment_request_skipped_duplicate_total)", "legendFormat": "skipped(duplicate,total)" },
+        { "refId": "F", "expr": "sum(ticketing_payment_request_dropped_missing_reservation_total)", "legendFormat": "dropped(missing_reservation,total)" },
+        { "refId": "G", "expr": "sum(ticketing_payment_settle_skipped_already_terminal_total)", "legendFormat": "skipped(settle_already_terminal,total)" }
+      ]
+    },
+    {
+      "type": "text",
+      "title": "지표 의미 (정합성 식 포함)",
+      "gridPos": { "x": 0, "y": 28, "w": 24, "h": 4 },
+      "options": {
+        "mode": "markdown",
+        "content": "### 용어 정리(정합성 기준)\n- **requested(issued_to_worker_queue)**: 결제 요청이 **실제로 워커 큐(payment.queue)에 올라간** 누적 카운트\n- **settled(success+fail)**: 결제 결과가 성공/실패로 **확정된** 누적 카운트\n- **queue_wait(rabbit_depth,current)**: 워커가 아직 가져가지 않은 **큐 대기**(현재 depth)\n- **worker_sleep(processing,current)**: 워커가 처리 중인 **PROCESSING 건수(현재)** (시뮬레이션 sleep 포함)\n- **dropped/skipped**: 워커 단계에서 누락/중복/이미 터미널 등의 이유로 **정산으로 가지 못한** 누적 카운트\n\n#### 목표 정합성 식(누적 total)\n- `requested ≈ settled + queue_wait + worker_sleep + dropped + skipped_duplicate + skipped_settle_already_terminal`\n\n#### requested 정합성(mismatch) 패널 설명\n- 이 패널은 **현재 대시보드 시간 범위($__range) 안에서의 Δ(증분) 기준**으로 검산합니다.\n- 식: `Δrequested - (Δsettled + Δdropped/skipped + Δ(queue_wait + worker_sleep))`\n- Prometheus 버전 제약으로 `queue_wait/worker_sleep`의 시작값은 `min_over_time()`로 잡습니다.\n- 그래서 **컨테이너 재시작으로 누적 카운터가 리셋되어도**, 시간 범위를 테스트 구간으로 맞추면 0 근처로 수렴해야 정상입니다.\n"
+      }
+    },
+    {
+      "type": "timeseries",
       "title": "누적 처리량(성공+실패) — 기울기로 확인",
-      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "gridPos": { "x": 0, "y": 32, "w": 12, "h": 8 },
       "targets": [
         {
           "refId": "A",
@@ -116,7 +163,7 @@
     {
       "type": "timeseries",
       "title": "평균 응답시간(ms)",
-      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "gridPos": { "x": 12, "y": 32, "w": 12, "h": 8 },
       "targets": [
         { "refId": "A", "expr": "(sum(rate(http_server_requests_seconds_sum{job=\"ticketing\"}[1m])) / sum(rate(http_server_requests_seconds_count{job=\"ticketing\"}[1m]))) * 1000" }
       ]
@@ -124,7 +171,7 @@
     {
       "type": "timeseries",
       "title": "Redis 반응성(PING latency, ms)",
-      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 },
+      "gridPos": { "x": 0, "y": 40, "w": 24, "h": 8 },
       "targets": [
         { "refId": "A", "expr": "ticketing_redis_ping_latency_ms" }
       ]

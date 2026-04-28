@@ -37,6 +37,7 @@ public class IntegrityMetricsService {
     private final AtomicLong mismatchSoldVsConfirmed = new AtomicLong();
     private final AtomicLong mismatchConfirmedVsPaySuccess = new AtomicLong();
     private final AtomicLong mismatchCanceledVsPayFailed = new AtomicLong();
+    private final AtomicLong mismatchPendingVsPayProcessing = new AtomicLong();
 
     @PostConstruct
     public void registerGauges() {
@@ -79,6 +80,9 @@ public class IntegrityMetricsService {
         Gauge.builder("ticketing.integrity.mismatch.canceled_vs_payment_failed", mismatchCanceledVsPayFailed, AtomicLong::get)
                 .description("|reservations(CANCELED) - payments(FAILED)|")
                 .register(registry);
+        Gauge.builder("ticketing.integrity.mismatch.pending_vs_payment_processing", mismatchPendingVsPayProcessing, AtomicLong::get)
+                .description("|reservations(PENDING_PAYMENT) - payments(PROCESSING)|")
+                .register(registry);
     }
 
     @Scheduled(fixedDelayString = "${ticketing.integrity.metrics.interval-ms:5000}")
@@ -106,7 +110,10 @@ public class IntegrityMetricsService {
         mismatchHeldVsPending.set(Math.abs(held - pending));
         mismatchSoldVsConfirmed.set(Math.abs(sold - confirmed));
         mismatchConfirmedVsPaySuccess.set(Math.abs(confirmed - payOk));
+        // NOTE: canceled can include user_cancel and other reasons, so it is not a strict invariant with payment FAILED.
+        // Keep it as a signal, but do not treat it as a "must be 0" integrity invariant.
         mismatchCanceledVsPayFailed.set(Math.abs(canceled - payFail));
+        mismatchPendingVsPayProcessing.set(Math.abs(pending - payProc));
     }
 }
 

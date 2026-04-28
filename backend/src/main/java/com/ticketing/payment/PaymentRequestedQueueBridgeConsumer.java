@@ -27,6 +27,8 @@ public class PaymentRequestedQueueBridgeConsumer {
             businessMetrics.incKafkaConsumed(KafkaTopics.PAYMENT_REQUESTED);
             rabbitTemplate.convertAndSend("", RabbitConfig.PAYMENT_QUEUE, event);
             businessMetrics.incRabbitPublished(RabbitConfig.PAYMENT_QUEUE);
+            // "requested" should reflect what actually gets issued to the worker queue.
+            businessMetrics.incPaymentRequested();
             log.info("Payment request enqueued reservationId={}", event.reservationId());
         } catch (Exception e) {
             log.error("Failed to enqueue payment request: {}", e.getMessage(), e);

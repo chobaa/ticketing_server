@@ -104,6 +104,24 @@ export const api = {
     req<{ time?: string; tps?: number; p99Latency?: number; meanLatencyMs?: number; queueDepth?: number }>(
       `/api/dashboard/realtime`,
     ),
+  dashboardBusinessMetrics: () =>
+    req<{
+      time?: string
+      paymentRequestedTotal?: number
+      paymentSucceededTotal?: number
+      paymentFailedTotal?: number
+      paymentSettledTotal?: number
+      paymentInflight?: number
+      paymentQueueDepth?: number
+      paymentWorkersSleeping?: number
+      paymentWorkerSleepMsTotal?: number
+      paymentProcessing?: number
+      paymentDroppedMissingReservationTotal?: number
+      paymentSkippedDuplicateTotal?: number
+      paymentSettleSkippedAlreadyTerminalTotal?: number
+      paymentRequestedExpectedTotal?: number
+      paymentRequestedMismatch?: number
+    }>(`/api/dashboard/business-metrics`),
 
   /** Page index is 0-based (nGrinder / Spring Data). */
   ngrinderTests: (page = 0, size = 20) =>
@@ -129,6 +147,12 @@ export const api = {
   ngrinderStartRequestCount: (requestCount: number) =>
     req<NgrinderPerfTestEntity>(
       `/api/dashboard/ngrinder/requests/start?requestCount=${encodeURIComponent(String(requestCount))}`,
+      { method: 'POST' },
+    ),
+  /** Start a test that runs until payment-requested delta reaches requestedCount, then stops. */
+  ngrinderStartPaymentRequestedCount: (requestedCount: number) =>
+    req<NgrinderPerfTestEntity>(
+      `/api/dashboard/ngrinder/payment-requests/start?requestedCount=${encodeURIComponent(String(requestedCount))}`,
       { method: 'POST' },
     ),
   ngrinderStartPreset: (

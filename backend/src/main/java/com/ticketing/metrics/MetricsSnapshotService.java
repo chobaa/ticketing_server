@@ -37,11 +37,14 @@ public class MetricsSnapshotService {
         long prev = lastHttpCount.getAndSet(total);
         m.put("tps", Math.max(0, total - prev));
 
-        double latencyMs = findP99Millis();
-        if (latencyMs <= 0 && timer != null) {
-            latencyMs = timer.mean(TimeUnit.MILLISECONDS);
+        double p99Ms = findP99Millis();
+        if (p99Ms <= 0 && timer != null) {
+            p99Ms = timer.mean(TimeUnit.MILLISECONDS);
         }
-        m.put("p99Latency", Math.round(latencyMs * 100.0) / 100.0);
+        m.put("p99Latency", Math.round(p99Ms * 100.0) / 100.0);
+
+        double meanMs = timer != null ? timer.mean(TimeUnit.MILLISECONDS) : 0.0;
+        m.put("meanLatencyMs", Math.round(meanMs * 100.0) / 100.0);
 
         m.put("time", java.time.Instant.now().toString());
         return m;

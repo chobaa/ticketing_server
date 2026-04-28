@@ -240,15 +240,37 @@ function EventList() {
       <ul className="flex flex-col gap-3">
         {events.map((e) => (
           <li key={e.id}>
-            <Link to={`/events/${e.id}`}>
-              <LiquidGlassPanel className="block cursor-pointer hover:opacity-95 active:scale-[0.99]">
-                <div className="text-left">
-                  <div className="text-lg font-medium">{e.name}</div>
-                  <div className="text-sm text-neutral-600 dark:text-neutral-400">{e.venue}</div>
-                  <div className="mt-1 text-xs uppercase text-violet-500">{e.status}</div>
-                </div>
-              </LiquidGlassPanel>
-            </Link>
+            <div className="relative">
+              <Link to={`/events/${e.id}`}>
+                <LiquidGlassPanel className="block cursor-pointer hover:opacity-95 active:scale-[0.99]">
+                  <div className="pr-10 text-left">
+                    <div className="text-lg font-medium">{e.name}</div>
+                    <div className="text-sm text-neutral-600 dark:text-neutral-400">{e.venue}</div>
+                    <div className="mt-1 text-xs uppercase text-violet-500">{e.status}</div>
+                  </div>
+                </LiquidGlassPanel>
+              </Link>
+              <button
+                type="button"
+                aria-label="Delete event"
+                title="삭제"
+                className="absolute right-3 top-3 rounded-xl border border-red-500/30 bg-white/20 px-2.5 py-1.5 text-xs font-semibold text-red-600 backdrop-blur hover:bg-red-500/10 active:scale-[0.98] dark:text-red-300"
+                onClick={async (ev) => {
+                  ev.preventDefault()
+                  ev.stopPropagation()
+                  const ok = window.confirm(`이 공연을 삭제할까요?\n\n${e.name}`)
+                  if (!ok) return
+                  try {
+                    await api.deleteEvent(e.id)
+                    load()
+                  } catch (x) {
+                    setErr(x instanceof Error ? x.message : '삭제 실패')
+                  }
+                }}
+              >
+                삭제
+              </button>
+            </div>
           </li>
         ))}
       </ul>
@@ -448,7 +470,25 @@ function EventDetail() {
           ← 목록
         </Link>
         <LiquidGlassPanel className="mb-6">
-          <div className="text-lg font-semibold">예매</div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-lg font-semibold">예매</div>
+            <button
+              type="button"
+              className="rounded-xl border border-red-500/30 bg-white/20 px-3 py-1.5 text-xs font-semibold text-red-600 backdrop-blur hover:bg-red-500/10 active:scale-[0.98] dark:text-red-300"
+              onClick={async () => {
+                const ok = window.confirm(`이 공연(eventId=${eventId})을 삭제할까요?\n(연관된 좌석/예약/결제도 정리됩니다)`)
+                if (!ok) return
+                try {
+                  await api.deleteEvent(eventId)
+                  nav('/events')
+                } catch (x) {
+                  setMsg(x instanceof Error ? x.message : '삭제 실패')
+                }
+              }}
+            >
+              삭제
+            </button>
+          </div>
           <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">{queueTextView}</p>
           <p className="mt-1 text-xs text-neutral-500">
             입장 토큰: {admissionToken ? `${admissionToken.slice(0, 8)}…` : '없음'}

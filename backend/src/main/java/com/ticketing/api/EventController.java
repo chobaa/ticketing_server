@@ -41,4 +41,18 @@ public class EventController {
     public List<SeatSnapshot> seats(@PathVariable Long id) {
         return seatViewCacheService.getSeats(id);
     }
+
+    /**
+     * Delete an event and its load-test artifacts.
+     * Requires authentication (see SecurityConfig); intended for test teardown / admin usage.
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        try {
+            eventService.deleteEvent(id);
+            return ResponseEntity.noContent().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }

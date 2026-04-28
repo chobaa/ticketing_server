@@ -86,6 +86,24 @@ public class QueueService {
         z.remove(String.valueOf(userId));
     }
 
+    /**
+     * Best-effort cleanup for test events:
+     * - removes queue zset
+     * - removes admission tokens for the event (pattern delete)
+     *
+     * Note: pattern delete can be expensive on large keyspaces, but this project uses it for test teardown only.
+     */
+    public void purgeEvent(long eventId) {
+        try {
+            redissonClient.getScoredSortedSet(queueKey(eventId)).delete();
+        } catch (Exception ignored) {
+        }
+        try {
+            redissonClient.getKeys().deleteByPattern("admission:" + eventId + ":*");
+        } catch (Exception ignored) {
+        }
+    }
+
     public long getWaitingCount(long eventId) {
         return redissonClient.getScoredSortedSet(queueKey(eventId)).size();
     }

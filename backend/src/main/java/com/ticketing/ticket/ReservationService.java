@@ -15,6 +15,8 @@ import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -73,7 +75,7 @@ public class ReservationService {
                             .build();
             r = reservationRepository.save(r);
 
-            reservationEventProducer.publishTicketReserved(
+            TicketReservedEvent evt =
                     new TicketReservedEvent(
                             r.getId(),
                             userId,
@@ -81,7 +83,19 @@ public class ReservationService {
                             seatId,
                             seat.getSeatNumber(),
                             seat.getPrice(),
-                            Instant.now()));
+                            Instant.now());
+            // Publish AFTER commit so downstream payment pipeline never races DB commit.
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                TransactionSynchronizationManager.registerSynchronization(
+                        new TransactionSynchronization() {
+                            @Override
+                            public void afterCommit() {
+                                reservationEventProducer.publishTicketReserved(evt);
+                            }
+                        });
+            } else {
+                reservationEventProducer.publishTicketReserved(evt);
+            }
             return r;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

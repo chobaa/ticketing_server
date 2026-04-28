@@ -14,6 +14,12 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     List<Reservation> findByUserIdAndEventId(Long userId, Long eventId);
     Optional<Reservation> findByIdAndUserIdAndEventId(Long id, Long userId, Long eventId);
 
+    List<Reservation> findByEventId(Long eventId);
+
+    long countByStatus(String status);
+
+    void deleteByEventId(Long eventId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT r FROM Reservation r WHERE r.id = :id")
     Optional<Reservation> findByIdForUpdate(@Param("id") Long id);

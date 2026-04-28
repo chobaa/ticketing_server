@@ -5,6 +5,7 @@ import com.ticketing.messaging.dto.PaymentFailedEvent;
 import com.ticketing.messaging.dto.PaymentRequestedEvent;
 import com.ticketing.messaging.dto.PaymentSucceededEvent;
 import com.ticketing.metrics.BusinessMetrics;
+import com.ticketing.ticket.Reservation;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -97,6 +98,19 @@ public class PaymentSimulationService {
         transactionTemplate.executeWithoutResult(status -> {
             Payment payment = paymentRepository.findByReservationId(event.reservationId()).orElse(null);
             if (payment == null || !"PROCESSING".equalsIgnoreCase(payment.getStatus())) {
+                return;
+            }
+            // If reservation is no longer pending (e.g. user canceled), do not publish settlement events.
+            // Just mark payment terminal to avoid accumulating PROCESSING rows and integrity mismatches.
+            Reservation reservation = reservationRepository.findById(event.reservationId()).orElse(null);
+            if (reservation == null || !"PENDING_PAYMENT".equalsIgnoreCase(reservation.getStatus())) {
+                payment.setStatus("FAILED");
+                payment.setFailureCode("RESERVATION_NOT_PENDING");
+                payment.setFailureMessage("Reservation already terminal (canceled/confirmed) before payment completed");
+                paymentRepository.save(payment);
+                log.info("Payment simulation aborted reservationId={} because reservationStatus={}",
+                        event.reservationId(),
+                        reservation == null ? "MISSING" : reservation.getStatus());
                 return;
             }
             boolean success = ThreadLocalRandom.current().nextDouble() < normalizedSuccessRate();

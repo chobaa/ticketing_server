@@ -138,6 +138,7 @@ public class ReservationService {
         if ("CONFIRMED".equalsIgnoreCase(reservation.getStatus())) {
             throw new IllegalStateException("Confirmed reservation cannot be canceled");
         }
-        reservationSettlementService.settleFailure(reservationId, reason == null ? "user_cancel" : reason);
+        reservationSettlementService.settleFailure(
+                reservationId, reason == null ? "user_cancel" : reason, false);
     }
 }

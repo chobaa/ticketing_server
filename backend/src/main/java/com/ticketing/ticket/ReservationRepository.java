@@ -18,6 +18,9 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
 
     long countByStatus(String status);
 
+    @Query("SELECT COUNT(DISTINCT r.seatId) FROM Reservation r WHERE r.status = :status")
+    long countDistinctSeatIdByStatus(@Param("status") String status);
+
     void deleteByEventId(Long eventId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

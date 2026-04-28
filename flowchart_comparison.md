@@ -140,7 +140,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-  NGU[nGrinder Controller\nhttp://localhost:9080] --> NGA[nGrinder Agent\n(script runner)]
+  NGU[nGrinder Controller\nhttp://localhost:19080] --> NGA[nGrinder Agent\n(script runner)]
   NGA -->|baseUrl=http://host.docker.internal:8080| B[Backend API]
   B --> R[Redis]
   B --> DB[(MySQL)]

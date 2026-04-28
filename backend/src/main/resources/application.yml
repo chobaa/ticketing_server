@@ -65,7 +65,7 @@ ticketing:
     secret: ${JWT_SECRET:change-me-in-production-use-long-random-string-at-least-256-bits}
     expiration-ms: 86400000
   ngrinder:
-    base-url: ${NGRINDER_BASE_URL:http://localhost:9080}
+    base-url: ${NGRINDER_BASE_URL:http://localhost:19080}
     username: ${NGRINDER_USERNAME:admin}
     password: ${NGRINDER_PASSWORD:admin}
   rate-limit:

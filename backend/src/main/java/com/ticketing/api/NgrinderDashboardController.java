@@ -236,7 +236,7 @@ public class NgrinderDashboardController {
         if (!hasAnyScript) {
             ObjectNode err = JsonNodeFactory.instance.objectNode();
             err.put("error", "nGrinder script repository is empty. Upload scripts first (prevents 'script should exist').");
-            err.put("hint", "Run: .\\\\load-tests\\\\ngrinder\\\\upload-scripts.ps1 -ControllerBaseUrl http://localhost:9080 -Username admin -Password admin");
+            err.put("hint", "Run: .\\\\load-tests\\\\ngrinder\\\\upload-scripts.ps1 -ControllerBaseUrl http://localhost:19080 -Username admin -Password admin");
             return ResponseEntity.badRequest().body(err);
         }
 
@@ -486,7 +486,9 @@ public class NgrinderDashboardController {
         int vusers = 30;
         int threads = 30;
         int seats = Math.max(200, requestedCount * 2);
-        int seatPool = Math.min(20, Math.max(1, seats));
+        // requested-count tests should be able to keep reserving without canceling:
+        // use a large enough seat pool so we don't quickly exhaust a tiny subset of seats as SOLD.
+        int seatPool = Math.min(seats, Math.max(50, requestedCount));
 
         // Keep the script running (duration mode) so it keeps generating traffic until backend stops it.
         long durationMs = Math.min(60 * 60 * 1000L, Math.max(5 * 60 * 1000L, (long) requestedCount * 1500L));
@@ -512,9 +514,12 @@ public class NgrinderDashboardController {
         param.append("seatPoolSize=").append(seatPool).append(";");
         param.append("testDurationSec=").append(testDurationSec).append(";");
         param.append("admissionMaxWaitSec=30;");
-        // requestTarget/paymentTarget = 0 means "keep running until duration" (or backend stop)
+        // For requested-count tests we MUST NOT cancel reservations, otherwise the payment pipeline is aborted
+        // (by design) and (success+fail) stays near 0, breaking requested accounting.
         param.append("requestTarget=0;");
-        param.append("paymentTarget=0;");
+        // Any positive number switches the script to "wait for terminal outcome (no cancel)" mode.
+        // Use a very large target so it never stops naturally; backend stopWhenRequestedReached will stop it.
+        param.append("paymentTarget=1000000000;");
         body.put("param", param.toString());
 
         long baselineRequested = paymentCountRunner.currentRequestedTotalRounded();

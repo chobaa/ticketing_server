@@ -182,6 +182,9 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+      - "15692:15692"
+    volumes:
+      - ./docker/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
 
   backend:
     build:
@@ -217,6 +220,7 @@ services:
       REDIS_CLUSTER_NODES: redis-node-1:7000,redis-node-2:7001,redis-node-3:7002,redis-node-4:7003,redis-node-5:7004,redis-node-6:7005
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       RABBITMQ_HOST: rabbitmq
+      PAYMENT_WORKER_CONCURRENCY: "32"
       JWT_SECRET: docker-dev-change-me-use-long-secret-string-32chars-min
       NGRINDER_BASE_URL: http://controller
       NGRINDER_USERNAME: admin

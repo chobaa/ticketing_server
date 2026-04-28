@@ -107,8 +107,11 @@ public class IntegrityMetricsService {
         paymentsProcessing.set(payProc);
 
         // Invariants (absolute mismatch counts)
-        mismatchHeldVsPending.set(Math.abs(held - pending));
-        mismatchSoldVsConfirmed.set(Math.abs(sold - confirmed));
+        long pendingSeats = reservationRepository.countDistinctSeatIdByStatus("PENDING_PAYMENT");
+        long confirmedSeats = reservationRepository.countDistinctSeatIdByStatus("CONFIRMED");
+        mismatchHeldVsPending.set(Math.abs(held - pendingSeats));
+        // Seat state is per-seat, so compare SOLD seats vs distinct confirmed seatIds.
+        mismatchSoldVsConfirmed.set(Math.abs(sold - confirmedSeats));
         mismatchConfirmedVsPaySuccess.set(Math.abs(confirmed - payOk));
         // NOTE: canceled can include user_cancel and other reasons, so it is not a strict invariant with payment FAILED.
         // Keep it as a signal, but do not treat it as a "must be 0" integrity invariant.

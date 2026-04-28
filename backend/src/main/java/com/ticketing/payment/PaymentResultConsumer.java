@@ -37,7 +37,7 @@ public class PaymentResultConsumer {
             PaymentFailedEvent event = objectMapper.readValue(payload, PaymentFailedEvent.class);
             businessMetrics.incKafkaConsumed(KafkaTopics.PAYMENT_FAILED);
             String reason = event.failureCode() + ":" + event.failureMessage();
-            reservationSettlementService.settleFailure(event.reservationId(), reason);
+            reservationSettlementService.settleFailure(event.reservationId(), reason, true);
             log.info("Payment settled failure reservationId={}", event.reservationId());
         } catch (Exception e) {
             log.error("Failed to settle payment failed event: {}", e.getMessage(), e);

@@ -35,6 +35,7 @@ public class ReservationSettlementService {
                 .findByIdForUpdate(reservation.getSeatId())
                 .orElseThrow(() -> new IllegalArgumentException("Seat not found"));
         if ("CONFIRMED".equalsIgnoreCase(reservation.getStatus()) && "SOLD".equalsIgnoreCase(seat.getStatus())) {
+            businessMetrics.incPaymentSettleSkippedAlreadyTerminal();
             return;
         }
         reservation.setStatus("CONFIRMED");
@@ -55,6 +56,7 @@ public class ReservationSettlementService {
                 .findByIdForUpdate(reservation.getSeatId())
                 .orElseThrow(() -> new IllegalArgumentException("Seat not found"));
         if ("CANCELED".equalsIgnoreCase(reservation.getStatus()) && "AVAILABLE".equalsIgnoreCase(seat.getStatus())) {
+            businessMetrics.incPaymentSettleSkippedAlreadyTerminal();
             return;
         }
         reservation.setStatus("CANCELED");

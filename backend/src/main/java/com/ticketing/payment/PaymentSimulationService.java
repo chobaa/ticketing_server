@@ -4,6 +4,7 @@ import com.ticketing.messaging.ReservationEventProducer;
 import com.ticketing.messaging.dto.PaymentFailedEvent;
 import com.ticketing.messaging.dto.PaymentRequestedEvent;
 import com.ticketing.messaging.dto.PaymentSucceededEvent;
+import com.ticketing.metrics.BusinessMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,6 +32,7 @@ public class PaymentSimulationService {
     private final ReservationRepository reservationRepository;
     private final ReservationEventProducer reservationEventProducer;
     private final TransactionTemplate transactionTemplate;
+    private final BusinessMetrics businessMetrics;
 
     @Value("${ticketing.payment.simulation.min-delay-ms:2000}")
     private long minDelayMs;
@@ -50,9 +52,11 @@ public class PaymentSimulationService {
                                     // If reservation row does not exist (stale/invalid async event), drop safely.
                                     if (!reservationRepository.existsById(event.reservationId())) {
                                         log.warn("Dropping payment request for missing reservationId={}", event.reservationId());
+                                        businessMetrics.incPaymentRequestDroppedMissingReservation();
                                         return false;
                                     }
                                     if (paymentRepository.findByReservationId(event.reservationId()).isPresent()) {
+                                        businessMetrics.incPaymentRequestSkippedDuplicate();
                                         return false;
                                     }
                                     Payment processing =
@@ -79,11 +83,15 @@ public class PaymentSimulationService {
                 event.reservationId(),
                 event.userId(),
                 dwellMs);
+        businessMetrics.addPaymentWorkerSleepMs(dwellMs);
+        businessMetrics.incPaymentWorkersSleeping();
         try {
             Thread.sleep(dwellMs);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return;
+        } finally {
+            businessMetrics.decPaymentWorkersSleeping();
         }
 
         transactionTemplate.executeWithoutResult(status -> {

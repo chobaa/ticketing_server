@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import static net.grinder.script.Grinder.grinder
 import static org.hamcrest.MatcherAssert.assertThat
 import static org.hamcrest.Matchers.greaterThan
+import static org.hamcrest.Matchers.greaterThanOrEqualTo
 import static org.hamcrest.Matchers.is
 
 @RunWith(GrinderRunner)
@@ -54,6 +55,7 @@ class AllInOneScenario {
     static GTest testCancel
     static GTest testProgress
     static GTest testSeatCheck
+    static GTest testSetup
 
     static HTTPRequest requestJoin
     static HTTPRequest requestAdmission
@@ -77,6 +79,15 @@ class AllInOneScenario {
     static AtomicInteger reserveSucceeded = new AtomicInteger(0)
     static AtomicInteger cancelSucceeded = new AtomicInteger(0)
     static AtomicInteger wrongSeatCount = new AtomicInteger(0)
+
+    // payment terminal count (CONFIRMED or CANCELED) to support "run N payments then finish"
+    static int paymentTarget = 0
+    static AtomicInteger paymentTerminalCount = new AtomicInteger(0)
+    static ConcurrentHashMap<Long, Boolean> paymentCountedReservationIds = new ConcurrentHashMap<>()
+
+    // request target: issue N reserve requests then finish immediately (no need to wait for 5 min duration)
+    static int requestTarget = 0
+    static AtomicInteger reserveIssued = new AtomicInteger(0)
 
     // Tracks currently-held seats to detect double-success concurrency bug
     static ConcurrentHashMap<Long, Long> activeSeatToReservation = new ConcurrentHashMap<>()
@@ -102,6 +113,7 @@ class AllInOneScenario {
         testCancel = new GTest(4, "05 all-in-one - cancel")
         testProgress = new GTest(5, "05 all-in-one - progress")
         testSeatCheck = new GTest(6, "05 all-in-one - seatCheck")
+        testSetup = new GTest(0, "05 all-in-one - setup")
 
         requestJoin = new HTTPRequest()
         requestAdmission = new HTTPRequest()
@@ -119,6 +131,11 @@ class AllInOneScenario {
 
         setupRequest = new HTTPRequest()
         initEventAndSeats()
+
+        // If provided (>0), stop naturally when terminal payment outcomes reach this count.
+        paymentTarget = paramInt("paymentTarget", "0")
+        // If provided (>0), stop naturally when reserve requests issued reach this count.
+        requestTarget = paramInt("requestTarget", "0")
     }
 
     @BeforeThread
@@ -129,6 +146,10 @@ class AllInOneScenario {
         testCancel.record(this, "05 all-in-one - cancel")
         testProgress.record(this, "05 all-in-one - progress")
         testSeatCheck.record(this, "05 all-in-one - seatCheck")
+        testSetup.record(this, "05 all-in-one - setup")
+        // Only worker threads can invoke recorded tests.
+        // We record the shared setupRequest here so register/login calls contribute to TPS and avoid "Too low TPS".
+        testSetup.record(setupRequest)
         grinder.statistics.delayReports = true
 
         int threadIdx = (grinder.threadNumber as int)
@@ -161,19 +182,42 @@ class AllInOneScenario {
     @Test
     void test() {
         while (System.currentTimeMillis() < endAtMs) {
+            if (requestTarget > 0 && reserveIssued.get() >= requestTarget) {
+                break
+            }
+            if (paymentTarget > 0 && paymentTerminalCount.get() >= paymentTarget) {
+                break
+            }
             if (admissionTokenCached == null) {
                 joinQueue()
                 admissionTokenCached = pollAdmissionToken()
             }
 
+            // Allocate a single "reserve request slot" so we don't overshoot requestTarget across threads.
+            if (requestTarget > 0) {
+                int seq = reserveIssued.incrementAndGet()
+                if (seq > requestTarget) {
+                    break
+                }
+            }
+
             reserveAttempted.incrementAndGet()
             Long reservationId = reserveOnce(chosenSeatId, admissionTokenCached)
             if (reservationId != null) {
-                // Verify reservation belongs to the seat this user attempted
-                verifyProgress(reservationId, ["PENDING_PAYMENT", "CONFIRMED", "CANCELED"])
-                cancelReservation(reservationId)
-                verifyProgress(reservationId, ["CANCELED"])
-                verifySeatAvailable(chosenSeatId)
+                if (requestTarget > 0) {
+                    // requestTarget mode: only issue reserve requests and finish (do not wait/cancel).
+                    // This keeps request count deterministic and avoids extending runtime.
+                } else if (paymentTarget > 0) {
+                    // Payment-target mode: DO NOT cancel.
+                    // Wait until the reservation reaches a terminal outcome and count it.
+                    verifyProgressUntil(reservationId, ["CONFIRMED", "CANCELED"])
+                } else {
+                    // Legacy all-in-one mode: reserve -> cancel -> verify seat available
+                    verifyProgressUntil(reservationId, ["PENDING_PAYMENT", "CONFIRMED", "CANCELED"])
+                    cancelReservation(reservationId)
+                    verifyProgressUntil(reservationId, ["CANCELED"])
+                    verifySeatAvailable(chosenSeatId)
+                }
             }
 
             try {
@@ -186,6 +230,31 @@ class AllInOneScenario {
 
     @AfterProcess
     static void afterProcess() {
+        if (requestTarget > 0) {
+            grinder.logger.info(
+                    "RequestTarget summary: target={} reserveIssued={} attempted={} reserveOk={}",
+                    requestTarget,
+                    reserveIssued.get(),
+                    reserveAttempted.get(),
+                    reserveSucceeded.get()
+            )
+            assertThat(reserveIssued.get(), is(greaterThanOrEqualTo(requestTarget)))
+            return
+        }
+        if (paymentTarget > 0) {
+            grinder.logger.info(
+                    "PaymentTarget summary: target={} terminalCount={} attempted={} reserveOk={} wrongSeat={}",
+                    paymentTarget,
+                    paymentTerminalCount.get(),
+                    reserveAttempted.get(),
+                    reserveSucceeded.get(),
+                    wrongSeatCount.get()
+            )
+            // In paymentTarget mode, prioritize finishing N terminal outcomes.
+            assertThat(paymentTerminalCount.get(), is(greaterThanOrEqualTo(paymentTarget)))
+            return
+        }
+
         grinder.logger.info(
                 "AllInOneScenario summary: attempted={}, reserveOk={}, cancelOk={}, wrongSeat={}, activeSeats={}",
                 reserveAttempted.get(),
@@ -351,17 +420,45 @@ class AllInOneScenario {
         cancelSucceeded.incrementAndGet()
     }
 
-    private void verifyProgress(long reservationId, List<String> expectedStatuses) {
+    private void verifyProgressUntil(long reservationId, List<String> expectedStatuses) {
         String url = baseUrl + "/api/events/" + eventId + "/reservations/" + reservationId + "/progress"
-        HTTPResponse resp = requestProgress.GET(url, [:], ["Authorization": "Bearer " + bearer])
-        if (resp.getStatusCode() != 200) {
-            throw new IllegalStateException("progress failed: status=" + resp.getStatusCode() + " body=" + resp.getBodyText())
+        int pollIntervalMs = paramInt("progressPollIntervalMs", "200")
+        int maxWaitSec = paramInt("progressMaxWaitSec", "30")
+        int maxAttempts = (maxWaitSec * 1000) / Math.max(50, pollIntervalMs)
+        def json = new JsonSlurper()
+
+        String lastStatus = null
+        for (int i = 0; i < maxAttempts; i++) {
+            HTTPResponse resp = requestProgress.GET(url, [:], ["Authorization": "Bearer " + bearer])
+            if (resp.getStatusCode() != 200) {
+                throw new IllegalStateException("progress failed: status=" + resp.getStatusCode() + " body=" + resp.getBodyText())
+            }
+            def obj = json.parseText(resp.getBodyText())
+            String st = (obj.reservationStatus as String)
+            lastStatus = st
+
+            if (st != null && expectedStatuses.any { it.equalsIgnoreCase(st) }) {
+                // Count terminal outcomes once per reservation.
+                if (st.equalsIgnoreCase("CONFIRMED") || st.equalsIgnoreCase("CANCELED")) {
+                    Boolean prev = paymentCountedReservationIds.putIfAbsent(reservationId as Long, true)
+                    if (prev == null) {
+                        int n = paymentTerminalCount.incrementAndGet()
+                        if (paymentTarget > 0 && (n <= 10 || n % 50 == 0)) {
+                            grinder.logger.info("paymentTerminalCount progress: {}/{}", n, paymentTarget)
+                        }
+                    }
+                }
+                return
+            }
+
+            try {
+                Thread.sleep(pollIntervalMs)
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt()
+            }
         }
-        def obj = new JsonSlurper().parseText(resp.getBodyText())
-        String st = (obj.reservationStatus as String)
-        if (st == null || !expectedStatuses.any { it.equalsIgnoreCase(st) }) {
-            throw new IllegalStateException("unexpected reservationStatus=" + st + " expected=" + expectedStatuses)
-        }
+
+        throw new IllegalStateException("Timeout waiting reservationStatus=" + expectedStatuses + " last=" + lastStatus)
     }
 
     private void verifySeatAvailable(long seatId) {

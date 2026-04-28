@@ -43,6 +43,8 @@ public class SecurityConfig {
                                         .permitAll()
                                         .requestMatchers("/actuator/health", "/actuator/prometheus", "/actuator/metrics")
                                         .permitAll()
+                                        .requestMatchers("/api/dashboard/**")
+                                        .permitAll()
                                         .requestMatchers("/ws/**")
                                         .permitAll()
                                         .requestMatchers("/api/**")

@@ -116,6 +116,17 @@ export const api = {
   ngrinderCloneStart: (id: number) =>
     req<NgrinderPerfTestEntity>(`/api/dashboard/ngrinder/tests/${id}/clone-and-start`, { method: 'POST' }),
   ngrinderDeleteAll: () => reqEmpty(`/api/dashboard/ngrinder/tests/delete-all`, { method: 'POST' }),
+  /** Start a single test that runs until paymentCount payments are settled, then auto-stops. */
+  ngrinderStartPayments: (paymentCount: number) =>
+    req<NgrinderPerfTestEntity>(`/api/dashboard/ngrinder/payments/start?paymentCount=${encodeURIComponent(String(paymentCount))}`, {
+      method: 'POST',
+    }),
+  /** Start a deterministic test that issues exactly requestCount reserve requests then finishes. */
+  ngrinderStartRequestCount: (requestCount: number) =>
+    req<NgrinderPerfTestEntity>(
+      `/api/dashboard/ngrinder/requests/start?requestCount=${encodeURIComponent(String(requestCount))}`,
+      { method: 'POST' },
+    ),
   ngrinderStartPreset: (
     key: string,
     opts?: {
@@ -250,6 +261,7 @@ export interface NgrinderStatusResponse {
 
 export interface NgrinderPerfResponse {
   TPS?: { TPS?: Array<number | null> }
+  Throughput?: { Throughput?: Array<number | null> }
   Errors?: { Errors?: Array<number | null> }
   Mean_Test_Time?: { ['Mean_Test_Time_(ms)']?: Array<number | null> }
   chartInterval?: number

@@ -267,7 +267,7 @@ function EventDetail() {
   const [paymentStep, setPaymentStep] = useState(false)
   const [reservationId, setReservationId] = useState<number | null>(null)
   const [progress, setProgress] = useState<ReservationPaymentProgressDto | null>(null)
-  const [progressNow, setProgressNow] = useState(Date.now())
+  const [progressNow, setProgressNow] = useState(() => new Date().getTime())
   const [finalizedAtMs, setFinalizedAtMs] = useState<number | null>(null)
   const detailContentRef = useRef<HTMLDivElement | null>(null)
 
@@ -278,12 +278,6 @@ function EventDetail() {
     if (p.paymentStartedAt) return 2
     return 1
   }
-
-  useEffect(() => {
-    if (admissionToken) {
-      setQueueText('입장 완료 · 좌석을 선택해 주세요 (입장 토큰 유효 10분)')
-    }
-  }, [admissionToken])
 
   useEffect(() => {
     if (admissionToken) return
@@ -297,7 +291,9 @@ function EventDetail() {
         )
         const adm = await api.admission(eventId)
         if (adm?.token) setAdmissionToken(adm.token)
-      } catch {}
+      } catch {
+        setQueueText('대기열 상태를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.')
+      }
     }, 2000)
     return () => clearInterval(handle)
   }, [eventId, admissionToken])
@@ -359,7 +355,7 @@ function EventDetail() {
       const r = await api.reserve(eventId, seatId, admissionToken)
       setMsg(`예약 생성됨 · reservation #${r.id} (${r.status})`)
       setReservationId(r.id)
-      setProgressNow(Date.now())
+      setProgressNow(new Date().getTime())
       setProgress(null)
       setFinalizedAtMs(null)
       setPaymentStep(true)
@@ -370,7 +366,7 @@ function EventDetail() {
 
   useEffect(() => {
     if (!paymentStep || !reservationId) return
-    const handle = window.setInterval(() => setProgressNow(Date.now()), 1000)
+    const handle = window.setInterval(() => setProgressNow(new Date().getTime()), 1000)
     return () => clearInterval(handle)
   }, [paymentStep, reservationId])
 
@@ -384,9 +380,11 @@ function EventDetail() {
         setProgress((prev) => (progressStageRank(p) >= progressStageRank(prev) ? p : prev))
         if (p.reservationStatus === 'CONFIRMED') {
           setMsg(`결제 완료 · reservation #${reservationId} (CONFIRMED)`)
+          setFinalizedAtMs((prev) => prev ?? new Date().getTime())
         } else if (p.reservationStatus === 'CANCELED') {
           const reason = p.failureMessage ? ` (${p.failureMessage})` : ''
           setMsg(`결제 실패 · reservation #${reservationId} (CANCELED)${reason}`)
+          setFinalizedAtMs((prev) => prev ?? new Date().getTime())
         }
       } catch {
         // ignore polling error
@@ -407,12 +405,9 @@ function EventDetail() {
   const paymentFailed = progress?.reservationStatus === 'CANCELED'
   const paymentOutcome = paymentSucceeded ? 'SUCCESS' : paymentFailed ? 'FAILED' : 'PENDING'
   const canReturnHomeByBackgroundClick = paymentOutcome !== 'PENDING'
-
-  useEffect(() => {
-    if (paymentOutcome !== 'PENDING' && finalizedAtMs == null) {
-      setFinalizedAtMs(Date.now())
-    }
-  }, [paymentOutcome, finalizedAtMs])
+  const queueTextView = admissionToken
+    ? '입장 완료 · 좌석을 선택해 주세요 (입장 토큰 유효 10분)'
+    : queueText
 
   useEffect(() => {
     if (!canReturnHomeByBackgroundClick) return
@@ -454,7 +449,7 @@ function EventDetail() {
         </Link>
         <LiquidGlassPanel className="mb-6">
           <div className="text-lg font-semibold">예매</div>
-          <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">{queueText}</p>
+          <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">{queueTextView}</p>
           <p className="mt-1 text-xs text-neutral-500">
             입장 토큰: {admissionToken ? `${admissionToken.slice(0, 8)}…` : '없음'}
           </p>

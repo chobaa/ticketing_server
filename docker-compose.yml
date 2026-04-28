@@ -151,10 +151,7 @@ services:
       - >
         sleep 2;
         echo 'creating redis cluster (idempotent)...';
-        redis-cli --cluster create
-          redis-node-1:7000 redis-node-2:7001 redis-node-3:7002
-          redis-node-4:7003 redis-node-5:7004 redis-node-6:7005
-          --cluster-replicas 1 --cluster-yes || true;
+        redis-cli --cluster create redis-node-1:7000 redis-node-2:7001 redis-node-3:7002 redis-node-4:7003 redis-node-5:7004 redis-node-6:7005 --cluster-replicas 1 --cluster-yes || true;
     restart: "no"
 
   zookeeper:
@@ -273,10 +270,12 @@ services:
   controller:
     image: ngrinder/controller:latest
     ports:
-      - "9080:80"
-      - "16001:16001"
-      - "9010-9019:9010-9019"
-      - "12000-12009:12000-12009"
+      # Remap host ports to avoid Windows reserved/conflicting ports.
+      # Default: controller UI at http://localhost:19080
+      - "19080:80"
+      - "26001:16001"
+      - "19010-19019:9010-9019"
+      - "22000-22009:12000-12009"
     environment:
       TZ: Asia/Seoul
     volumes:
@@ -286,6 +285,7 @@ services:
     image: ngrinder/agent:latest
     depends_on:
       - controller
+    command: ["controller:80"]
     environment:
       TZ: Asia/Seoul
     # If you want more load, scale this service:

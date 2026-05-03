@@ -103,8 +103,13 @@ docker compose up -d --build
 
 ```
 backend/          Spring Boot API, 도메인, Flyway 마이그레이션
+docs/             검토용 변경 메모 (아래 링크)
 frontend/         Vite React SPA, nginx 설정(Docker)
 load-tests/ngrinder/   Groovy 스크립트, upload-scripts.ps1
 docker/           prometheus.yml, grafana provisioning, rabbitmq.conf
 docker-compose.yml
 ```
+
+## 변경·검토 노트
+
+최근 세션에서 반영된 세부 사항(대시보드 nGrinder 모니터링, `payment-requests/start` **최대 15분** 창, Groovy 좌석 순환, 메트릭 API 수정 등)은 **[docs/change-notes-review.md](./docs/change-notes-review.md)** 에 모아 두었습니다. PR/위키로 옮길 때 참고용입니다.

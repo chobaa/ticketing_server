@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   CartesianGrid,
@@ -517,8 +517,10 @@ function NgrinderLoadTestPanel() {
     paymentSettledTotal?: number
     paymentInflight?: number
     paymentQueueDepth?: number
+    paymentProcessing?: number
     paymentWorkersSleeping?: number
     paymentWorkerSleepMsTotal?: number
+    paymentRequestedMismatch?: number
   } | null>(null)
 
   const [testId, setTestId] = useState<number | null>(null)
@@ -530,6 +532,9 @@ function NgrinderLoadTestPanel() {
   const [baselineRequested, setBaselineRequested] = useState<number | null>(null)
   const [baselineSucceeded, setBaselineSucceeded] = useState<number | null>(null)
   const [baselineFailed, setBaselineFailed] = useState<number | null>(null)
+
+  const prevRequestedDeltaRef = useRef<number | null>(null)
+  const flatRequestedDeltaTicksRef = useRef(0)
 
   const refresh = async (id: number) => {
     try {
@@ -547,6 +552,11 @@ function NgrinderLoadTestPanel() {
           paymentFailedTotal: bm.paymentFailedTotal,
           paymentSettledTotal: bm.paymentSettledTotal,
           paymentInflight: bm.paymentInflight,
+          paymentQueueDepth: bm.paymentQueueDepth,
+          paymentProcessing: bm.paymentProcessing,
+          paymentWorkersSleeping: bm.paymentWorkersSleeping,
+          paymentWorkerSleepMsTotal: bm.paymentWorkerSleepMsTotal,
+          paymentRequestedMismatch: bm.paymentRequestedMismatch,
         })
       }
       if (bm) {
@@ -584,7 +594,7 @@ function NgrinderLoadTestPanel() {
   useEffect(() => {
     if (!testId) return
     void refresh(testId)
-    const t = window.setInterval(() => void refresh(testId), 2500)
+    const t = window.setInterval(() => void refresh(testId), 2000)
     return () => window.clearInterval(t)
   }, [testId])
 
@@ -705,6 +715,30 @@ function NgrinderLoadTestPanel() {
       ? Math.max(0, paymentRequestedDelta - paymentSettledDelta)
       : null
 
+  useEffect(() => {
+    flatRequestedDeltaTicksRef.current = 0
+    prevRequestedDeltaRef.current = null
+  }, [testId])
+
+  useEffect(() => {
+    if (status?.status?.name !== 'TESTING' || paymentRequestedDelta == null) {
+      flatRequestedDeltaTicksRef.current = 0
+      prevRequestedDeltaRef.current = paymentRequestedDelta
+      return
+    }
+    if (prevRequestedDeltaRef.current === paymentRequestedDelta) {
+      flatRequestedDeltaTicksRef.current += 1
+    } else {
+      flatRequestedDeltaTicksRef.current = 0
+    }
+    prevRequestedDeltaRef.current = paymentRequestedDelta
+  }, [testId, paymentRequestedDelta, status?.status?.name])
+
+  const requestedDeltaLooksStuck =
+    status?.status?.name === 'TESTING' &&
+    paymentRequestedDelta != null &&
+    flatRequestedDeltaTicksRef.current >= 4
+
   // payment success/fail delta are derived from separate baselines captured at test start.
 
   const avgTps = useMemo(() => {
@@ -766,6 +800,13 @@ function NgrinderLoadTestPanel() {
 
         {err && <p className="mt-3 text-sm text-red-500">{err}</p>}
 
+        {requestedDeltaLooksStuck && (
+          <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+            Requested(Δ)가 여러 번 갱신됐는데도 값이 그대로입니다. 아래 파이프라인 지표를 확인하세요. 흔한 원인: 결제 워커 시뮬레이션 슬립으로 큐 적체, nGrinder progress 대기 타임아웃(새 테스트는
+            progressMaxWaitSec=120), 로컬 단독 실행 시 IP rate limit(기본 10/s)로 예약 HTTP 429.
+          </div>
+        )}
+
         <div className="mt-4 grid gap-3 lg:grid-cols-4">
           <StatusCard
             title="Status"
@@ -790,6 +831,52 @@ function NgrinderLoadTestPanel() {
             value={paymentFailedDelta != null ? String(paymentFailedDelta) : '—'}
             sub="서버 메트릭 기준(이번 테스트 증가분)"
             tone="red"
+          />
+        </div>
+
+        <div className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+          진행 중 파이프라인 (서버)
+        </div>
+        <div className="mt-1 grid gap-3 lg:grid-cols-4">
+          <StatusCard
+            title="Inflight (관측)"
+            value={biz?.paymentInflight != null ? String(Math.round(biz.paymentInflight)) : '—'}
+            sub="processing(DB) + Rabbit 대기"
+            tone="blue"
+          />
+          <StatusCard
+            title="Queue depth"
+            value={biz?.paymentQueueDepth != null ? String(Math.round(biz.paymentQueueDepth)) : '—'}
+            sub="아직 워커에 전달 안 된 건"
+            tone="amber"
+          />
+          <StatusCard
+            title="Processing (DB)"
+            value={biz?.paymentProcessing != null ? String(Math.round(biz.paymentProcessing)) : '—'}
+            sub="PROCESSING 결제 행"
+            tone="amber"
+          />
+          <StatusCard
+            title="Workers sleeping"
+            value={biz?.paymentWorkersSleeping != null ? String(Math.round(biz.paymentWorkersSleeping)) : '—'}
+            sub="시뮬레이션 슬립 중인 워커"
+            tone="amber"
+          />
+        </div>
+        <div className="mt-2 grid gap-3 lg:grid-cols-2">
+          <StatusCard
+            title="Requested mismatch"
+            value={
+              biz?.paymentRequestedMismatch != null ? String(Math.round(biz.paymentRequestedMismatch * 10) / 10) : '—'
+            }
+            sub="0에 가까우면 카운터·큐·DB가 맞음"
+            tone={biz?.paymentRequestedMismatch != null && Math.abs(biz.paymentRequestedMismatch) > 2 ? 'red' : 'green'}
+          />
+          <StatusCard
+            title="TPS (nGrinder)"
+            value={avgTps != null ? String(Math.round(avgTps * 10) / 10) : '—'}
+            sub="위 차트와 동일(샘플 평균)"
+            tone="blue"
           />
         </div>
 

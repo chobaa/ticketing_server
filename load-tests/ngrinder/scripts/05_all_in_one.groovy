@@ -190,6 +190,23 @@ class AllInOneScenario {
         }
     }
 
+    /**
+     * In paymentTarget mode, rotate seats per attempt: after CONFIRMED the seat is SOLD and a fixed
+     * per-thread seat would make every further reserve fail, stalling requested-count tests.
+     */
+    private long pickSeatIdForPaymentTargetAttempt() {
+        int poolSize = paramInt("seatPoolSize", "10")
+        if (poolSize < 1) poolSize = 1
+        if (seatIds.isEmpty()) {
+            return chosenSeatId
+        }
+        int effectivePool = Math.min(poolSize, seatIds.size())
+        int th = (grinder.threadNumber as int)
+        int k = reserveAttempted.get()
+        int idx = (k + th) % effectivePool
+        return seatIds.get(idx) as long
+    }
+
     @Test
     void test() {
         while (System.currentTimeMillis() < endAtMs) {
@@ -213,7 +230,8 @@ class AllInOneScenario {
             }
 
             reserveAttempted.incrementAndGet()
-            Long reservationId = reserveOnce(chosenSeatId, admissionTokenCached)
+            long seatForAttempt = (paymentTarget > 0) ? pickSeatIdForPaymentTargetAttempt() : chosenSeatId
+            Long reservationId = reserveOnce(seatForAttempt, admissionTokenCached)
             if (reservationId != null) {
                 if (requestTarget > 0) {
                     // requestTarget mode: make each issued reservation "complete" quickly so

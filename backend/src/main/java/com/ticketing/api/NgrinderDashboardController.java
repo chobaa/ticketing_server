@@ -490,9 +490,14 @@ public class NgrinderDashboardController {
         // use a large enough seat pool so we don't quickly exhaust a tiny subset of seats as SOLD.
         int seatPool = Math.min(seats, Math.max(50, requestedCount));
 
-        // Keep the script running (duration mode) so it keeps generating traffic until backend stops it.
-        long durationMs = Math.min(60 * 60 * 1000L, Math.max(5 * 60 * 1000L, (long) requestedCount * 1500L));
-        int testDurationSec = (int) Math.min(3600, Math.max(120, (durationMs / 1000L) - 5));
+        // Keep the script running (duration mode) until backend stopWhenRequestedReached hits the target.
+        // Per-request wall time must cover payment simulation (multi-second dwell) × queue depth, not just raw TPS.
+        long maxWindowMs = 15 * 60 * 1000L;
+        long durationMs =
+                Math.min(maxWindowMs, Math.max(60 * 1000L, (long) requestedCount * 60_000L));
+        long maxWindowSec = maxWindowMs / 1000L;
+        int testDurationSec =
+                (int) Math.min(maxWindowSec, Math.max(60L, (durationMs / 1000L) - 5L));
 
         ObjectNode body = JsonNodeFactory.instance.objectNode();
         String now = LocalDateTime.now().toString();
@@ -514,6 +519,8 @@ public class NgrinderDashboardController {
         param.append("seatPoolSize=").append(seatPool).append(";");
         param.append("testDurationSec=").append(testDurationSec).append(";");
         param.append("admissionMaxWaitSec=30;");
+        // Default script progress wait is 30s; under load, payment workers can queue longer than that.
+        param.append("progressMaxWaitSec=120;");
         // For requested-count tests we MUST NOT cancel reservations, otherwise the payment pipeline is aborted
         // (by design) and (success+fail) stays near 0, breaking requested accounting.
         param.append("requestTarget=0;");

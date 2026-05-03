@@ -81,8 +81,7 @@ public class DashboardRealtimeController {
         m.put(
                 "paymentWipDerivedVsObserved",
                 Math.max(0.0, wipDerived) - Math.max(0.0, processing + queueDepth));
-        // backwards compatibility for older frontend fields
-        m.put("paymentWorkersSleeping", 0.0);
+        m.put("paymentWorkersSleeping", gauge("ticketing.payment.worker.sleeping"));
         m.put("paymentWorkerSleepMsTotal", sleepMsTotal);
         m.put("time", java.time.Instant.now().toString());
         return ResponseEntity.ok(m);

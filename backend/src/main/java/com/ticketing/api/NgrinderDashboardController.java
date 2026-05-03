@@ -529,6 +529,10 @@ public class NgrinderDashboardController {
             paymentCountRunner.stopWhenRequestedReached(id, requestedCount, baselineRequested, durationMs + 60_000L);
             paymentCountRunner.stopOnTimeout(id, durationMs + 60_000L);
         }
+        if (created != null && created.isObject()) {
+            ((ObjectNode) created).put("baselinePaymentRequestedTotal", baselineRequested);
+            ((ObjectNode) created).put("requestedCountTarget", requestedCount);
+        }
         return ResponseEntity.ok(created);
     }
 

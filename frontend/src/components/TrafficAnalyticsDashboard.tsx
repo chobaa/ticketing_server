@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   CartesianGrid,
@@ -24,7 +24,6 @@ export function UserDashboard() {
   const nav = useNavigate()
   const [data, setData] = useState<Point[]>([])
   const [pingMs, setPingMs] = useState<number | null>(null)
-  const pingMsRef = useRef<number | null>(null)
   const [pingSeries, setPingSeries] = useState<SparkPoint[]>([])
   const [settledTotal, setSettledTotal] = useState<number | null>(null)
   const [settledSeries, setSettledSeries] = useState<SparkPoint[]>([])
@@ -168,14 +167,12 @@ export function UserDashboard() {
         await api.dashboardPing()
         const ms = Math.max(0, Math.round((performance.now() - st) * 10) / 10)
         if (!cancelled) {
-          pingMsRef.current = ms
           setPingMs(ms)
           const t = new Date().toLocaleTimeString()
           setPingSeries((prev) => [...prev, { time: t, value: ms }].slice(-60))
         }
       } catch {
         if (!cancelled) {
-          pingMsRef.current = null
           setPingMs(null)
           const t = new Date().toLocaleTimeString()
           setPingSeries((prev) => [...prev, { time: t, value: null }].slice(-60))

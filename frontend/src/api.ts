@@ -127,66 +127,17 @@ export const api = {
       paymentRequestedMismatch?: number
     }>(`/api/dashboard/business-metrics`),
 
-  /** Page index is 0-based (nGrinder / Spring Data). */
-  ngrinderTests: (page = 0, size = 20) =>
-    req<NgrinderTestsListResponse>(`/api/dashboard/ngrinder/tests?page=${page}&size=${size}`),
   ngrinderStatus: (id: number) => req<NgrinderStatusResponse>(`/api/dashboard/ngrinder/tests/${id}/status`),
   ngrinderPerf: (id: number, dataType = 'TPS,Errors,Mean_Test_Time', imgWidth = 800) =>
     req<NgrinderPerfResponse>(
       `/api/dashboard/ngrinder/tests/${id}/perf?dataType=${encodeURIComponent(dataType)}&imgWidth=${imgWidth}`,
     ),
   ngrinderLogs: (id: number) => req<NgrinderLogsResponse>(`/api/dashboard/ngrinder/tests/${id}/logs`),
-  ngrinderReady: (id: number) =>
-    req<NgrinderPerfTestEntity>(`/api/dashboard/ngrinder/tests/${id}/ready`, { method: 'POST' }),
   ngrinderStop: (id: number) => reqEmpty(`/api/dashboard/ngrinder/tests/${id}/stop`, { method: 'POST' }),
-  ngrinderCloneStart: (id: number) =>
-    req<NgrinderPerfTestEntity>(`/api/dashboard/ngrinder/tests/${id}/clone-and-start`, { method: 'POST' }),
-  ngrinderDeleteAll: () => reqEmpty(`/api/dashboard/ngrinder/tests/delete-all`, { method: 'POST' }),
-  /** Start a single test that runs until paymentCount payments are settled, then auto-stops. */
-  ngrinderStartPayments: (paymentCount: number) =>
-    req<NgrinderPerfTestEntity>(`/api/dashboard/ngrinder/payments/start?paymentCount=${encodeURIComponent(String(paymentCount))}`, {
-      method: 'POST',
-    }),
-  /** Start a deterministic test that issues exactly requestCount reserve requests then finishes. */
-  ngrinderStartRequestCount: (requestCount: number) =>
-    req<NgrinderPerfTestEntity>(
-      `/api/dashboard/ngrinder/requests/start?requestCount=${encodeURIComponent(String(requestCount))}`,
-      { method: 'POST' },
-    ),
   /** Start a test that runs until payment-requested delta reaches requestedCount, then stops. */
   ngrinderStartPaymentRequestedCount: (requestedCount: number) =>
     req<NgrinderPerfTestEntity>(
       `/api/dashboard/ngrinder/payment-requests/start?requestedCount=${encodeURIComponent(String(requestedCount))}`,
-      { method: 'POST' },
-    ),
-  ngrinderStartPreset: (
-    key: string,
-    opts?: {
-      baseUrl?: string
-      vusers?: number
-      threads?: number
-      testDurationSec?: number
-      eventSeatCount?: number
-      seatPoolSize?: number
-    },
-  ) =>
-    req<NgrinderPerfTestEntity>(
-      (() => {
-        const p = new URLSearchParams()
-        if (opts?.baseUrl) p.set('baseUrl', opts.baseUrl)
-        if (opts?.vusers != null) p.set('vusers', String(opts.vusers))
-        if (opts?.threads != null) p.set('threads', String(opts.threads))
-        if (opts?.testDurationSec != null) p.set('testDurationSec', String(opts.testDurationSec))
-        if (opts?.eventSeatCount != null) p.set('eventSeatCount', String(opts.eventSeatCount))
-        if (opts?.seatPoolSize != null) p.set('seatPoolSize', String(opts.seatPoolSize))
-        const qs = p.toString()
-        return `/api/dashboard/ngrinder/presets/${encodeURIComponent(key)}/start${qs ? `?${qs}` : ''}`
-      })(),
-      { method: 'POST' },
-    ),
-  ngrinderRunAllPresets: (baseUrl?: string) =>
-    req<Record<string, NgrinderPerfTestEntity | { error?: string }>>(
-      `/api/dashboard/ngrinder/presets/run-all${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`,
       { method: 'POST' },
     ),
 }
@@ -257,25 +208,6 @@ export type NgrinderTestStatusName =
   | 'STOP_BY_ERROR'
   | 'CANCELED'
   | 'UNKNOWN'
-
-export interface NgrinderTestItem {
-  id: number
-  testName?: string
-  name?: string
-  description?: string
-  createdAt?: number
-  lastModifiedAt?: number
-  status?: { name?: NgrinderTestStatusName } | string
-}
-
-export interface NgrinderTestsListResponse {
-  tests?: NgrinderTestItem[]
-  totalElements?: number
-  number?: number
-  size?: number
-  /** Present when backend wrapped a raw JSON array from older nGrinder list APIs. */
-  hasNext?: boolean
-}
 
 /** nGrinder log list endpoint returns an array of file names (strings). */
 export type NgrinderLogsResponse = string[]

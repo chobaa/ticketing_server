@@ -36,6 +36,12 @@ services:
         "no",
       ]
     ports: ["7000:7000"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7000", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
 
   redis-node-2:
     image: redis:7-alpine
@@ -56,6 +62,12 @@ services:
         "no",
       ]
     ports: ["7001:7001"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7001", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
 
   redis-node-3:
     image: redis:7-alpine
@@ -76,6 +88,12 @@ services:
         "no",
       ]
     ports: ["7002:7002"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7002", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
 
   redis-node-4:
     image: redis:7-alpine
@@ -96,6 +114,12 @@ services:
         "no",
       ]
     ports: ["7003:7003"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7003", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
 
   redis-node-5:
     image: redis:7-alpine
@@ -116,6 +140,12 @@ services:
         "no",
       ]
     ports: ["7004:7004"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7004", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
 
   redis-node-6:
     image: redis:7-alpine
@@ -136,20 +166,32 @@ services:
         "no",
       ]
     ports: ["7005:7005"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7005", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
 
   redis-cluster-init:
     image: redis:7-alpine
     depends_on:
-      - redis-node-1
-      - redis-node-2
-      - redis-node-3
-      - redis-node-4
-      - redis-node-5
-      - redis-node-6
+      redis-node-1:
+        condition: service_healthy
+      redis-node-2:
+        condition: service_healthy
+      redis-node-3:
+        condition: service_healthy
+      redis-node-4:
+        condition: service_healthy
+      redis-node-5:
+        condition: service_healthy
+      redis-node-6:
+        condition: service_healthy
     entrypoint: ["/bin/sh", "-lc"]
     command:
       - >
-        sleep 2;
+        sleep 5;
         echo 'creating redis cluster (idempotent)...';
         redis-cli --cluster create redis-node-1:7000 redis-node-2:7001 redis-node-3:7002 redis-node-4:7003 redis-node-5:7004 redis-node-6:7005 --cluster-replicas 1 --cluster-yes || true;
     restart: "no"
@@ -176,6 +218,16 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "kafka-broker-api-versions --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 45s
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -185,6 +237,12 @@ services:
       - "15692:15692"
     volumes:
       - ./docker/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
 
   backend:
     build:
@@ -194,22 +252,24 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      redis-cluster-init:
+        condition: service_completed_successfully
       redis-node-1:
-        condition: service_started
+        condition: service_healthy
       redis-node-2:
-        condition: service_started
+        condition: service_healthy
       redis-node-3:
-        condition: service_started
+        condition: service_healthy
       redis-node-4:
-        condition: service_started
+        condition: service_healthy
       redis-node-5:
-        condition: service_started
+        condition: service_healthy
       redis-node-6:
-        condition: service_started
+        condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
       rabbitmq:
-        condition: service_started
+        condition: service_healthy
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
@@ -241,7 +301,8 @@ services:
     ports:
       - "9090:9090"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
   grafana:
     image: grafana/grafana:11.5.2

@@ -1,30 +1,50 @@
 {
-  "uid": "ticketing-overview",
-  "title": "티켓팅 핵심 대시보드",
-  "timezone": "browser",
-  "schemaVersion": 39,
-  "version": 20,
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "liveNow": false,
   "refresh": "5s",
+  "schemaVersion": 39,
+  "style": "dark",
   "tags": ["ticketing"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "티켓팅 핵심 대시보드",
+  "uid": "ticketing-overview",
+  "version": 1,
   "panels": [
     {
+      "id": 1,
       "type": "stat",
-      "title": "데이터 정합성 불일치(합계)",
-      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "title": "정합성 불일치(합, 0=정상)",
+      "gridPos": { "x": 0, "y": 0, "w": 3, "h": 3 },
       "targets": [
         {
           "refId": "A",
           "expr": "sum(ticketing_integrity_mismatch_held_vs_pending) + sum(ticketing_integrity_mismatch_sold_vs_confirmed) + sum(ticketing_integrity_mismatch_confirmed_vs_payment_success) + sum(ticketing_integrity_mismatch_pending_vs_payment_processing)"
         }
       ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
       "fieldConfig": {
         "defaults": {
+          "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "red", "value": 1 }
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 2 }
             ]
           }
         },
@@ -32,206 +52,400 @@
       }
     },
     {
+      "id": 2,
       "type": "stat",
-      "title": "WIP = 발행 - (성공+실패+드롭+중복) (구간)",
-      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "title": "정산 스킵(이미 종료, 구간)",
+      "gridPos": { "x": 3, "y": 0, "w": 3, "h": 3 },
       "targets": [
         {
           "refId": "A",
-          "expr": "((round(sum(increase(ticketing_payment_requested_total[$__range])))) or vector(0))\n - (\n   round(sum(increase(ticketing_payment_succeeded_total[$__range])))\n   + round(sum(increase(ticketing_payment_failed_total[$__range])))\n   + round(sum(increase(ticketing_payment_request_dropped_missing_reservation_total[$__range])))\n   + round(sum(increase(ticketing_payment_request_skipped_duplicate_total[$__range])))\n )"
+          "expr": "round(sum(increase(ticketing_payment_settle_skipped_already_terminal_total[$__range])))"
         }
       ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
     },
     {
+      "id": 3,
       "type": "stat",
-      "title": "누적 처리량(성공+실패 총합)",
-      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "title": "결제 성공(구간)",
+      "gridPos": { "x": 6, "y": 0, "w": 3, "h": 3 },
       "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(ticketing_integrity_payments_success) + sum(ticketing_integrity_payments_failed)"
-        }
+        { "refId": "A", "expr": "round(sum(increase(ticketing_payment_succeeded_total[$__range])))" }
       ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "fixedColor": "green", "mode": "fixed" } },
+        "overrides": []
+      }
     },
     {
+      "id": 4,
       "type": "stat",
-      "title": "평균 응답시간(ms)",
-      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "title": "결제 실패(구간)",
+      "gridPos": { "x": 9, "y": 0, "w": 3, "h": 3 },
+      "targets": [
+        { "refId": "A", "expr": "round(sum(increase(ticketing_payment_failed_total[$__range])))" }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "fixedColor": "orange", "mode": "fixed" } },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "HTTP 평균 응답(ms)",
+      "gridPos": { "x": 12, "y": 0, "w": 3, "h": 3 },
       "targets": [
         {
           "refId": "A",
           "expr": "(sum(rate(http_server_requests_seconds_sum{job=\"ticketing\"}[1m])) / sum(rate(http_server_requests_seconds_count{job=\"ticketing\"}[1m]))) * 1000"
         }
       ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": { "defaults": { "unit": "ms", "decimals": 1 }, "overrides": [] }
     },
     {
+      "id": 6,
       "type": "stat",
-      "title": "성공(구간)",
-      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
-      "targets": [{ "refId": "A", "expr": "round(sum(increase(ticketing_payment_succeeded_total[$__range])))" }],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+      "title": "Redis 클러스터(연결)",
+      "gridPos": { "x": 15, "y": 0, "w": 3, "h": 3 },
+      "targets": [{ "refId": "A", "expr": "sum(ticketing_redis_up)" }],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
     },
     {
+      "id": 7,
       "type": "stat",
-      "title": "실패(구간)",
-      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
-      "targets": [{ "refId": "A", "expr": "round(sum(increase(ticketing_payment_failed_total[$__range])))" }],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
-    },
-    {
-      "type": "stat",
-      "title": "드롭+중복(구간)",
-      "gridPos": { "x": 0, "y": 4, "w": 4, "h": 4 },
+      "title": "Kafka 처리량(합산, msg/s)",
+      "gridPos": { "x": 18, "y": 0, "w": 3, "h": 3 },
       "targets": [
         {
           "refId": "A",
-          "expr": "round(sum(increase(ticketing_payment_request_dropped_missing_reservation_total[$__range])) + sum(increase(ticketing_payment_request_skipped_duplicate_total[$__range])))"
+          "expr": "sum(rate(ticketing_messaging_kafka_produced_total[1m])) + sum(rate(ticketing_messaging_kafka_consumed_total[1m]))"
         }
       ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] }
     },
     {
+      "id": 8,
       "type": "stat",
-      "title": "WIP(현재) = 발행 - (성공+실패+드롭+중복)",
-      "gridPos": { "x": 4, "y": 4, "w": 4, "h": 4 },
+      "title": "RabbitMQ payment.queue(대기+처리중)",
+      "gridPos": { "x": 21, "y": 0, "w": 3, "h": 3 },
       "targets": [
-        {
-          "refId": "A",
-          "expr": "round(\n  sum(ticketing_payment_requested_total)\n  - (\n    sum(ticketing_payment_succeeded_total)\n    + sum(ticketing_payment_failed_total)\n    + sum(ticketing_payment_request_dropped_missing_reservation_total)\n    + sum(ticketing_payment_request_skipped_duplicate_total)\n  )\n)"
-        }
+        { "refId": "A", "expr": "sum(rabbitmq_queue_messages{queue=\"payment.queue\"})" }
       ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
     },
     {
-      "type": "stat",
-      "title": "결제 backlog(현재=대기+처리중)",
-      "gridPos": { "x": 8, "y": 4, "w": 4, "h": 4 },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(rabbitmq_queue_messages{queue=\"payment.queue\"})"
-        }
-      ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
-    },
-    {
-      "type": "stat",
-      "title": "payment.queue consumed(구간 누적)",
-      "gridPos": { "x": 12, "y": 4, "w": 6, "h": 4 },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "round(sum(increase(ticketing_messaging_rabbit_consumed_total{queue=\"payment.queue\"}[$__range])))"
-        }
-      ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
-    },
-    {
-      "type": "stat",
-      "title": "payment.queue published(구간 누적)",
-      "gridPos": { "x": 18, "y": 4, "w": 6, "h": 4 },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "round(sum(increase(ticketing_messaging_rabbit_published_total{queue=\"payment.queue\"}[$__range])))"
-        }
-      ],
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
-    },
-    {
+      "id": 10,
       "type": "timeseries",
-      "title": "데이터 정합성 불일치(0이어야 정상)",
-      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
-      "targets": [
-        { "refId": "A", "expr": "sum(ticketing_integrity_mismatch_held_vs_pending)" },
-        { "refId": "B", "expr": "sum(ticketing_integrity_mismatch_sold_vs_confirmed)" },
-        { "refId": "C", "expr": "sum(ticketing_integrity_mismatch_confirmed_vs_payment_success)" },
-        { "refId": "D", "expr": "sum(ticketing_integrity_mismatch_pending_vs_payment_processing)" }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "발행 vs 정산(구간 누적)",
-      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
-      "targets": [
-        { "refId": "A", "expr": "(round(sum(increase(ticketing_payment_requested_total[$__range])))) or vector(0)", "legendFormat": "requested(발행)" },
-        { "refId": "B", "expr": "round(sum(increase(ticketing_integrity_payments_success[$__range]) + increase(ticketing_integrity_payments_failed[$__range])))", "legendFormat": "settled(DB,success+fail)" }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "RabbitMQ payment.queue backlog(ready/unacked/total)",
-      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
-      "targets": [
-        { "refId": "A", "expr": "sum(rabbitmq_queue_messages_ready{queue=\"payment.queue\"})", "legendFormat": "ready" },
-        { "refId": "B", "expr": "sum(rabbitmq_queue_messages_unacked{queue=\"payment.queue\"})", "legendFormat": "unacked(in-flight)" },
-        { "refId": "C", "expr": "sum(rabbitmq_queue_messages{queue=\"payment.queue\"})", "legendFormat": "total" },
-        { "refId": "D", "expr": "sum(rabbitmq_queue_consumers{queue=\"payment.queue\"})", "legendFormat": "consumers" }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "payment.queue 처리량(consume rate)",
-      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "title": "정합성 — 불일치 항목(각 0에 가까울수록 좋음)",
+      "gridPos": { "x": 0, "y": 3, "w": 12, "h": 8 },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(ticketing_messaging_rabbit_consumed_total{queue=\"payment.queue\"}[1m]))",
-          "legendFormat": "consumed/sec"
+          "expr": "sum(ticketing_integrity_mismatch_held_vs_pending)",
+          "legendFormat": "HELD vs PENDING"
         },
         {
           "refId": "B",
-          "expr": "sum(rate(ticketing_messaging_rabbit_published_total{queue=\"payment.queue\"}[1m]))",
-          "legendFormat": "published/sec"
+          "expr": "sum(ticketing_integrity_mismatch_sold_vs_confirmed)",
+          "legendFormat": "SOLD vs CONFIRMED"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(ticketing_integrity_mismatch_confirmed_vs_payment_success)",
+          "legendFormat": "CONFIRMED vs PAY_SUCCESS"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(ticketing_integrity_mismatch_pending_vs_payment_processing)",
+          "legendFormat": "PENDING vs PROCESSING"
+        },
+        {
+          "refId": "E",
+          "expr": "sum(ticketing_integrity_mismatch_canceled_vs_payment_failed)",
+          "legendFormat": "CANCELED vs PAY_FAILED(참고)"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 8, "showPoints": "never" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
     },
     {
+      "id": 11,
       "type": "timeseries",
-      "title": "결제 파이프라인: requested / settled / inflight",
-      "gridPos": { "x": 0, "y": 24, "w": 24, "h": 8 },
-      "targets": [
-        { "refId": "A", "expr": "sum(ticketing_payment_requested_total)", "legendFormat": "requested(issued_to_worker_queue,total)" },
-        { "refId": "B", "expr": "sum(ticketing_integrity_payments_success) + sum(ticketing_integrity_payments_failed)", "legendFormat": "settled(DB,total)=success+fail" },
-        { "refId": "C", "expr": "sum(ticketing_integrity_payments_processing)", "legendFormat": "worker_sleep(processing,current)" },
-        { "refId": "D", "expr": "sum(rabbitmq_queue_messages_ready{queue=\"payment.queue\"})", "legendFormat": "queue_ready(rabbit,current)" },
-        { "refId": "H", "expr": "sum(rabbitmq_queue_messages_unacked{queue=\"payment.queue\"})", "legendFormat": "queue_unacked(rabbit,current)" },
-        { "refId": "E", "expr": "sum(ticketing_payment_request_skipped_duplicate_total)", "legendFormat": "skipped(duplicate,total)" },
-        { "refId": "F", "expr": "sum(ticketing_payment_request_dropped_missing_reservation_total)", "legendFormat": "dropped(missing_reservation,total)" },
-        { "refId": "G", "expr": "sum(ticketing_payment_settle_skipped_already_terminal_total)", "legendFormat": "skipped(settle_already_terminal,total)" }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "누적 처리량(성공+실패) — 기울기로 확인",
-      "gridPos": { "x": 0, "y": 32, "w": 12, "h": 8 },
+      "title": "결제 / 정산 — 발행·성공·실패 속도 + 인플라이트",
+      "gridPos": { "x": 12, "y": 3, "w": 12, "h": 8 },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(ticketing_integrity_payments_success) + sum(ticketing_integrity_payments_failed)",
-          "legendFormat": "누적 처리량"
+          "expr": "sum(rate(ticketing_payment_requested_total[1m]))",
+          "legendFormat": "발행 req/s"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(ticketing_payment_succeeded_total[1m]))",
+          "legendFormat": "성공 정산/s"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(ticketing_payment_failed_total[1m]))",
+          "legendFormat": "실패 정산/s"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(ticketing_payment_settle_skipped_already_terminal_total[1m]))",
+          "legendFormat": "정산 스킵/s"
+        },
+        {
+          "refId": "E",
+          "expr": "sum(ticketing_payment_inflight)",
+          "legendFormat": "인플라이트(게이지)"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 5, "showPoints": "never" },
+          "unit": "ops"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "인플라이트(게이지)" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "custom.axisPlacement", "value": "right" }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
     },
     {
+      "id": 12,
       "type": "timeseries",
-      "title": "평균 응답시간(ms)",
-      "gridPos": { "x": 12, "y": 32, "w": 12, "h": 8 },
+      "title": "Kafka — produce / consume (토픽별)",
+      "gridPos": { "x": 0, "y": 11, "w": 12, "h": 8 },
       "targets": [
-        { "refId": "A", "expr": "(sum(rate(http_server_requests_seconds_sum{job=\"ticketing\"}[1m])) / sum(rate(http_server_requests_seconds_count{job=\"ticketing\"}[1m]))) * 1000" }
-      ]
+        {
+          "refId": "A",
+          "expr": "sum by (topic) (rate(ticketing_messaging_kafka_produced_total[1m]))",
+          "legendFormat": "produce {{topic}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (topic) (rate(ticketing_messaging_kafka_consumed_total[1m]))",
+          "legendFormat": "consume {{topic}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 5, "showPoints": "never" },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
     },
     {
+      "id": 13,
       "type": "timeseries",
-      "title": "Redis 반응성(PING latency, ms)",
-      "gridPos": { "x": 0, "y": 40, "w": 24, "h": 8 },
+      "title": "RabbitMQ — payment.queue",
+      "gridPos": { "x": 12, "y": 11, "w": 12, "h": 8 },
       "targets": [
-        { "refId": "A", "expr": "ticketing_redis_ping_latency_ms" }
-      ]
+        {
+          "refId": "A",
+          "expr": "sum(rabbitmq_queue_messages_ready{queue=\"payment.queue\"})",
+          "legendFormat": "ready"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rabbitmq_queue_messages_unacked{queue=\"payment.queue\"})",
+          "legendFormat": "unacked"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rabbitmq_queue_messages{queue=\"payment.queue\"})",
+          "legendFormat": "total"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rabbitmq_queue_consumers{queue=\"payment.queue\"})",
+          "legendFormat": "consumers"
+        },
+        {
+          "refId": "E",
+          "expr": "sum(rate(ticketing_messaging_rabbit_published_total{queue=\"payment.queue\"}[1m]))",
+          "legendFormat": "publish app/s"
+        },
+        {
+          "refId": "F",
+          "expr": "sum(rate(ticketing_messaging_rabbit_consumed_total{queue=\"payment.queue\"}[1m]))",
+          "legendFormat": "consume app/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 6, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/publish|consume/" },
+            "properties": [
+              { "id": "unit", "value": "ops" },
+              { "id": "custom.axisPlacement", "value": "right" }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "HTTP — 응답 시간(평균·p95)",
+      "gridPos": { "x": 0, "y": 19, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(http_server_requests_seconds_sum{job=\"ticketing\"}[1m])) / sum(rate(http_server_requests_seconds_count{job=\"ticketing\"}[1m]))) * 1000",
+          "legendFormat": "평균 ms"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"ticketing\"}[5m])) by (le)) * 1000",
+          "legendFormat": "p95 ms"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10, "showPoints": "never" },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Redis 클러스터(앱 관점) — 가용·지연·ops",
+      "gridPos": { "x": 12, "y": 19, "w": 12, "h": 8 },
+      "targets": [
+        { "refId": "A", "expr": "sum(ticketing_redis_up)", "legendFormat": "up(1=정상)" },
+        {
+          "refId": "B",
+          "expr": "sum(ticketing_redis_ping_latency_ms)",
+          "legendFormat": "PING ms"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (op) (rate(ticketing_redis_ops_total[1m]))",
+          "legendFormat": "ops {{op}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 5, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "up(1=정상)" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "max", "value": 1 },
+              { "id": "min", "value": 0 },
+              { "id": "custom.axisPlacement", "value": "right" }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "/ops/" },
+            "properties": [{ "id": "unit", "value": "ops" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "PING ms" },
+            "properties": [{ "id": "unit", "value": "ms" }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
     }
   ]
 }
-

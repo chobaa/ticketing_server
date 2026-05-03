@@ -12,6 +12,7 @@ import {
 import { LiquidGlassPanel } from './LiquidGlassPanel'
 import {
   api,
+  type DashboardStatusDto,
   type NgrinderPerfResponse,
   type NgrinderStatusResponse,
 } from '../api'
@@ -28,6 +29,8 @@ export function UserDashboard() {
   const [settledTotal, setSettledTotal] = useState<number | null>(null)
   const [settledSeries, setSettledSeries] = useState<SparkPoint[]>([])
   const [rtMode, setRtMode] = useState<'ws' | 'http'>('ws')
+  const [deps, setDeps] = useState<DashboardStatusDto | null>(null)
+  const [paymentMismatch, setPaymentMismatch] = useState<number | null>(null)
 
   useEffect(() => {
     const path = '/ws/metrics'
@@ -102,10 +105,34 @@ export function UserDashboard() {
 
   useEffect(() => {
     let cancelled = false
+    const pullDeps = async () => {
+      try {
+        const st = await api.dashboardStatus()
+        if (!cancelled) setDeps(st)
+      } catch {
+        if (!cancelled) setDeps(null)
+      }
+    }
+    void pullDeps()
+    const t = window.setInterval(pullDeps, 15_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(t)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
     const pullSettled = async () => {
       try {
         const bm = await api.dashboardBusinessMetrics()
         if (cancelled) return
+        const mm = bm.paymentRequestedMismatch
+        if (typeof mm === 'number' && Number.isFinite(mm)) {
+          setPaymentMismatch(Math.round(mm * 1000) / 1000)
+        } else {
+          setPaymentMismatch(null)
+        }
         const s =
           bm.paymentSettledTotal ??
           (typeof bm.paymentSucceededTotal === 'number' || typeof bm.paymentFailedTotal === 'number'
@@ -118,6 +145,7 @@ export function UserDashboard() {
         }
       } catch {
         if (!cancelled) {
+          setPaymentMismatch(null)
           setSettledTotal(null)
           const t = new Date().toLocaleTimeString()
           setSettledSeries((prev) => [...prev, { time: t, value: null }].slice(-60))
@@ -167,6 +195,10 @@ export function UserDashboard() {
     () => data.map((p) => ({ time: p.time, value: p.meanLatencyMs })),
     [data],
   )
+  const sparkTps = useMemo<SparkPoint[]>(
+    () => data.map((p) => ({ time: p.time, value: p.tps })),
+    [data],
+  )
 
   return (
     <div className="mx-auto w-full max-w-6xl">
@@ -174,7 +206,7 @@ export function UserDashboard() {
         <div>
           <div className="text-lg font-semibold text-neutral-800 dark:text-neutral-100">대시보드</div>
           <div className="text-xs text-neutral-500 dark:text-neutral-400">
-            Ping · 정산(settled) · 평균 응답 시간을 추적합니다.
+            실시간 TPS·지연·결제 정산·인프라 상태를 한 화면에서 봅니다.
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -189,11 +221,13 @@ export function UserDashboard() {
         </div>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-3">
+      <InfraDepsRow deps={deps} mismatch={paymentMismatch} />
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           title="Ping"
           value={pingMs != null ? `${pingMs} ms` : '—'}
-          sub={rtMode === 'ws' ? 'WS' : 'HTTP'}
+          sub={rtMode === 'ws' ? '실시간 WS' : 'HTTP 폴링'}
           data={pingSeries}
           stroke="#007AFF"
           unit="ms"
@@ -213,6 +247,14 @@ export function UserDashboard() {
           data={sparkMean}
           stroke="#FF3B30"
           unit="ms"
+        />
+        <MetricCard
+          title="TPS"
+          value={last ? `${Math.round((last.tps ?? 0) * 10) / 10}` : '—'}
+          sub="WebSocket 스냅샷"
+          data={sparkTps}
+          stroke="#8B5CF6"
+          unit="req/s"
         />
       </div>
 
@@ -238,6 +280,63 @@ export function UserDashboard() {
   )
 }
 
+function InfraDepsRow({
+  deps,
+  mismatch,
+}: {
+  deps: DashboardStatusDto | null
+  mismatch: number | null
+}) {
+  const pill = (label: string, ok: boolean | undefined, ms: number | undefined) => (
+    <div
+      key={label}
+      className="flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] backdrop-blur dark:border-white/10 dark:bg-black/25"
+    >
+      <span className="font-medium text-neutral-600 dark:text-neutral-300">{label}</span>
+      <span className={ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
+        {ok === undefined ? '—' : ok ? 'OK' : 'NG'}
+      </span>
+      {ms != null && <span className="text-neutral-500 dark:text-neutral-400">{Math.round(ms)}ms</span>}
+    </div>
+  )
+  return (
+    <div className="flex flex-col gap-2 rounded-2xl border border-white/20 bg-white/5 p-3 dark:border-white/10 dark:bg-black/20">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+          인프라
+        </span>
+        {deps?.deps
+          ? pill('MySQL', deps.deps.mysql?.ok, deps.deps.mysql?.latencyMs)
+          : null}
+        {deps?.deps ? pill('Redis', deps.deps.redis?.ok, deps.deps.redis?.latencyMs) : null}
+        {deps?.deps ? pill('Rabbit', deps.deps.rabbitmq?.ok, deps.deps.rabbitmq?.latencyMs) : null}
+        {deps?.deps ? pill('Kafka', deps.deps.kafka?.ok, deps.deps.kafka?.latencyMs) : null}
+        {!deps && <span className="text-xs text-neutral-500">상태를 불러오는 중…</span>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[11px] text-neutral-600 dark:text-neutral-300">
+        <span className="font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+          결제 카운터 정합
+        </span>
+        <span>
+          requested − 기대값 차이:{' '}
+          <span
+            className={
+              mismatch == null
+                ? 'font-mono text-neutral-500'
+                : Math.abs(mismatch) < 0.01
+                  ? 'font-mono text-emerald-600 dark:text-emerald-400'
+                  : 'font-mono text-amber-700 dark:text-amber-300'
+            }
+          >
+            {mismatch != null ? String(mismatch) : '—'}
+          </span>
+        </span>
+        <span className="text-neutral-500">(백엔드 /api/dashboard/business-metrics)</span>
+      </div>
+    </div>
+  )
+}
+
 function MetricCard({
   title,
   value,
@@ -253,6 +352,10 @@ function MetricCard({
   stroke: string
   unit: string
 }) {
+  const chartData = useMemo(
+    () => data.filter((p) => p.value != null && typeof p.value === 'number' && Number.isFinite(p.value)),
+    [data],
+  )
   return (
     <div className="rounded-3xl border border-white/25 bg-white/10 p-5 shadow-sm backdrop-blur dark:border-white/10 dark:bg-black/20">
       <div className="mb-3 flex items-start justify-between gap-3">
@@ -270,44 +373,50 @@ function MetricCard({
         <div className="pointer-events-none absolute right-3 top-2 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
           {unit}
         </div>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 6, right: 10, left: 6, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.12)" vertical={false} />
-            <XAxis
-              dataKey="time"
-              interval="preserveStartEnd"
-              tick={{ fontSize: 10, fill: 'rgba(115,115,115,0.9)' }}
-              axisLine={false}
-              tickLine={false}
-              minTickGap={24}
-            />
-            <YAxis
-              domain={['auto', 'auto']}
-              tick={{ fontSize: 10, fill: 'rgba(115,115,115,0.9)' }}
-              axisLine={false}
-              tickLine={false}
-              width={42}
-              tickFormatter={(v) => {
-                if (typeof v !== 'number' || !Number.isFinite(v)) return ''
-                const x = Math.round(v * 10) / 10
-                return String(x)
-              }}
-            />
-            <Tooltip
-              formatter={(v) =>
-                typeof v === 'number' ? [`${Math.round(v * 10) / 10} ${unit}`, title] : ['—', title]
-              }
-              contentStyle={{
-                background: 'rgba(17, 17, 17, 0.75)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                borderRadius: 16,
-                boxShadow: '0 12px 40px rgba(0,0,0,0.35)',
-              }}
-              labelStyle={{ color: 'rgba(255,255,255,0.85)' }}
-            />
-            <Line type="monotone" dataKey="value" stroke={stroke} strokeWidth={2.2} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
+        {chartData.length === 0 ? (
+          <div className="flex h-full items-center justify-center text-xs text-neutral-500 dark:text-neutral-400">
+            스파크라인 데이터 없음
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData} margin={{ top: 6, right: 10, left: 6, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.12)" vertical={false} />
+              <XAxis
+                dataKey="time"
+                interval="preserveStartEnd"
+                tick={{ fontSize: 10, fill: 'rgba(115,115,115,0.9)' }}
+                axisLine={false}
+                tickLine={false}
+                minTickGap={24}
+              />
+              <YAxis
+                domain={['auto', 'auto']}
+                tick={{ fontSize: 10, fill: 'rgba(115,115,115,0.9)' }}
+                axisLine={false}
+                tickLine={false}
+                width={42}
+                tickFormatter={(v) => {
+                  if (typeof v !== 'number' || !Number.isFinite(v)) return ''
+                  const x = Math.round(v * 10) / 10
+                  return String(x)
+                }}
+              />
+              <Tooltip
+                formatter={(v) =>
+                  typeof v === 'number' ? [`${Math.round(v * 10) / 10} ${unit}`, title] : ['—', title]
+                }
+                contentStyle={{
+                  background: 'rgba(17, 17, 17, 0.75)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: 16,
+                  boxShadow: '0 12px 40px rgba(0,0,0,0.35)',
+                }}
+                labelStyle={{ color: 'rgba(255,255,255,0.85)' }}
+              />
+              <Line type="monotone" dataKey="value" stroke={stroke} strokeWidth={2.2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
       </div>
     </div>
   )

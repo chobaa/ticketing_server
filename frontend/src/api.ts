@@ -61,7 +61,11 @@ export const api = {
       body: JSON.stringify({ email, password }),
       skipAuth: true,
     }),
-  events: () => req<EventDto[]>('/api/events', { skipAuth: true }),
+  events: (includeLoadTest = false) =>
+    req<EventDto[]>(
+      includeLoadTest ? '/api/events?includeLoadTest=true' : '/api/events',
+      { skipAuth: true },
+    ),
   createEvent: (body: CreateEventBody) =>
     req<EventDto>('/api/events', {
       method: 'POST',
@@ -213,6 +217,8 @@ export interface EventDto {
   venue: string
   startDate: string
   status: string
+  /** PUBLIC = 일반 공연, LOAD_TEST = 부하테스트용(기본 목록에서 숨김) */
+  listingScope?: string
 }
 
 export interface SeatDto {

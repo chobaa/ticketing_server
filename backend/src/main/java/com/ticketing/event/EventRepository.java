@@ -6,4 +6,6 @@ import java.util.List;
 
 public interface EventRepository extends JpaRepository<Event, Long> {
     List<Event> findAllByOrderByStartDateAsc();
+
+    List<Event> findAllByListingScopeOrderByStartDateAsc(String listingScope);
 }

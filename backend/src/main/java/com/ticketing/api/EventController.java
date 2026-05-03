@@ -27,9 +27,17 @@ public class EventController {
         return ResponseEntity.ok(eventService.create(body));
     }
 
+    /**
+     * Default list excludes {@code LOAD_TEST} events (nGrinder / load scripts).
+     * Pass {@code includeLoadTest=true} to show them (e.g. cleanup or debugging).
+     */
     @GetMapping
-    public List<Event> list() {
-        return eventRepository.findAllByOrderByStartDateAsc();
+    public List<Event> list(
+            @RequestParam(name = "includeLoadTest", defaultValue = "false") boolean includeLoadTest) {
+        if (includeLoadTest) {
+            return eventRepository.findAllByOrderByStartDateAsc();
+        }
+        return eventRepository.findAllByListingScopeOrderByStartDateAsc("PUBLIC");
     }
 
     @GetMapping("/{id}")

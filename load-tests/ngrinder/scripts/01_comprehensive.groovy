@@ -199,7 +199,8 @@ class ComprehensiveScenario {
                 startDate : startDate,
                 seatCount : seatCount,
                 seatPrice : seatPrice,
-                grade     : grade
+                grade     : grade,
+                listingScope: 'LOAD_TEST'
         ]
 
         String createUrl = baseUrl + "/api/events"

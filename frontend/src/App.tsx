@@ -84,6 +84,7 @@ function AuthCard({ onAuthed }: { onAuthed: () => void }) {
 function EventList() {
   const [events, setEvents] = useState<EventDto[]>([])
   const [err, setErr] = useState<string | null>(null)
+  const [showLoadTestEvents, setShowLoadTestEvents] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [addErr, setAddErr] = useState<string | null>(null)
   const [form, setForm] = useState<CreateEventBody>({
@@ -96,15 +97,16 @@ function EventList() {
   })
 
   function load() {
+    setErr(null)
     api
-      .events()
+      .events(showLoadTestEvents)
       .then(setEvents)
       .catch((e) => setErr(String(e)))
   }
 
   useEffect(() => {
     load()
-  }, [])
+  }, [showLoadTestEvents])
 
   useEffect(() => {
     if (!showAdd) return
@@ -142,15 +144,26 @@ function EventList() {
 
   return (
     <div className="mx-auto w-full max-w-lg px-4 py-8">
-      <div className="mb-6 flex items-center justify-between gap-3">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-xl font-semibold">공연</h2>
-        <button
-          type="button"
-          className="rounded-2xl bg-[#007AFF] px-4 py-2 text-sm font-medium text-white shadow active:scale-[0.98]"
-          onClick={() => setShowAdd(true)}
-        >
-          공연 추가
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-white/40 bg-white/30 accent-[#007AFF] dark:bg-black/30"
+              checked={showLoadTestEvents}
+              onChange={(e) => setShowLoadTestEvents(e.target.checked)}
+            />
+            테스트·부하용 공연 표시
+          </label>
+          <button
+            type="button"
+            className="rounded-2xl bg-[#007AFF] px-4 py-2 text-sm font-medium text-white shadow active:scale-[0.98]"
+            onClick={() => setShowAdd(true)}
+          >
+            공연 추가
+          </button>
+        </div>
       </div>
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/30 p-4 backdrop-blur-sm dark:bg-black/25">
@@ -244,7 +257,14 @@ function EventList() {
               <Link to={`/events/${e.id}`}>
                 <LiquidGlassPanel className="block cursor-pointer hover:opacity-95 active:scale-[0.99]">
                   <div className="pr-10 text-left">
-                    <div className="text-lg font-medium">{e.name}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="text-lg font-medium">{e.name}</div>
+                      {e.listingScope === 'LOAD_TEST' && (
+                        <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-200">
+                          테스트
+                        </span>
+                      )}
+                    </div>
                     <div className="text-sm text-neutral-600 dark:text-neutral-400">{e.venue}</div>
                     <div className="mt-1 text-xs uppercase text-violet-500">{e.status}</div>
                   </div>

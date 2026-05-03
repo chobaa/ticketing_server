@@ -36,6 +36,7 @@ public class SeedDataRunner implements CommandLineRunner {
                         .venue("Seoul Arena")
                         .startDate(LocalDateTime.now().plusDays(30))
                         .status("OPEN")
+                        .listingScope("PUBLIC")
                         .createdAt(Instant.now())
                         .build();
         ev = eventRepository.save(ev);

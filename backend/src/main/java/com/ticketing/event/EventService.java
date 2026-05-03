@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -33,6 +34,7 @@ public class EventService {
                         .venue(req.venue() != null ? req.venue() : "")
                         .startDate(start)
                         .status("OPEN")
+                        .listingScope(normalizeListingScope(req.listingScope()))
                         .createdAt(Instant.now())
                         .build();
         ev = eventRepository.save(ev);
@@ -81,5 +83,13 @@ public class EventService {
         // Redis cleanup
         seatViewCacheService.invalidate(eventId);
         queueService.purgeEvent(eventId);
+    }
+
+    private static String normalizeListingScope(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "PUBLIC";
+        }
+        String u = raw.trim().toUpperCase(Locale.ROOT);
+        return "LOAD_TEST".equals(u) ? "LOAD_TEST" : "PUBLIC";
     }
 }

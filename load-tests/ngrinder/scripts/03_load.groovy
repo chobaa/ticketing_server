@@ -191,7 +191,8 @@ class LoadScenario {
                 startDate : startDate,
                 seatCount : seatCount,
                 seatPrice : seatPrice,
-                grade     : grade
+                grade     : grade,
+                listingScope: 'LOAD_TEST'
         ]
 
         HTTPResponse createResp = setupRequest.POST(baseUrl + "/api/events", createBody, adminHeadersJson)

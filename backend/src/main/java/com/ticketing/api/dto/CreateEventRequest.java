@@ -10,4 +10,6 @@ public record CreateEventRequest(
         @NotBlank String startDate,
         @NotNull @Min(1) @Max(5000) Integer seatCount,
         @NotNull @DecimalMin("0.0") BigDecimal seatPrice,
-        @Size(max = 32) String grade) {}
+        @Size(max = 32) String grade,
+        /** {@code PUBLIC} or {@code LOAD_TEST}; omit or null for {@code PUBLIC}. */
+        @Size(max = 32) String listingScope) {}

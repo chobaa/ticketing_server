@@ -25,6 +25,7 @@ public class ReservationSettlementService {
     private final SeatViewCacheService seatViewCacheService;
     private final ReservationEventProducer reservationEventProducer;
     private final BusinessMetrics businessMetrics;
+    private final PaymentRepository paymentRepository;
 
     @Transactional
     public void settleSuccess(Long reservationId) {
@@ -37,10 +38,6 @@ public class ReservationSettlementService {
         // Only allow SUCCESS settlement from the expected in-flight state.
         // This prevents late/duplicate payment events from resurrecting canceled/expired reservations.
         if (!"PENDING_PAYMENT".equalsIgnoreCase(reservation.getStatus()) || !"HELD".equalsIgnoreCase(seat.getStatus())) {
-            businessMetrics.incPaymentSettleSkippedAlreadyTerminal();
-            return;
-        }
-        if ("CONFIRMED".equalsIgnoreCase(reservation.getStatus()) && "SOLD".equalsIgnoreCase(seat.getStatus())) {
             businessMetrics.incPaymentSettleSkippedAlreadyTerminal();
             return;
         }
@@ -72,15 +69,22 @@ public class ReservationSettlementService {
             businessMetrics.incPaymentSettleSkippedAlreadyTerminal();
             return;
         }
-        if ("CANCELED".equalsIgnoreCase(reservation.getStatus()) && "AVAILABLE".equalsIgnoreCase(seat.getStatus())) {
-            businessMetrics.incPaymentSettleSkippedAlreadyTerminal();
-            return;
-        }
         reservation.setStatus("CANCELED");
         seat.setStatus("AVAILABLE");
         reservationRepository.save(reservation);
         seatRepository.save(seat);
         seatViewCacheService.invalidate(reservation.getEventId());
+        if (!countTowardPaymentFailedMetric) {
+            paymentRepository
+                    .findByReservationId(reservationId)
+                    .filter(p -> "PROCESSING".equalsIgnoreCase(p.getStatus()))
+                    .ifPresent(p -> {
+                        p.setStatus("FAILED");
+                        p.setFailureCode("USER_CANCEL");
+                        p.setFailureMessage(reason != null && !reason.isBlank() ? reason : "USER_CANCEL");
+                        paymentRepository.save(p);
+                    });
+        }
         if (countTowardPaymentFailedMetric) {
             businessMetrics.incPaymentFailed();
         }

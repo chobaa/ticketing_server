@@ -114,6 +114,25 @@ public class NgrinderPaymentCountRunner {
                     long requested = currentRequestedTotalRounded();
                     long requestedDelta = Math.max(0, requested - baselineRequestedTotal);
                     if (requestedDelta >= targetRequestedDelta) {
+                        // Let in-flight simulations settle so DB/metrics are closer to "requested issued"
+                        // (otherwise we stop while workers still hold PROCESSING rows).
+                        final long graceStart = System.currentTimeMillis();
+                        final long graceMs = 30_000L;
+                        while (true) {
+                            long inflight = Math.max(0, Math.round(paymentInflight()));
+                            if (inflight == 0) {
+                                break;
+                            }
+                            if (System.currentTimeMillis() - graceStart > graceMs) {
+                                log.warn(
+                                        "Stopping nGrinder testId={} after requested target met but inflight still {} (graceMs={})",
+                                        testId,
+                                        inflight,
+                                        graceMs);
+                                break;
+                            }
+                            Thread.sleep(200);
+                        }
                         log.info(
                                 "Stopping nGrinder testId={} because requestedDelta reached: delta={} target={}",
                                 testId,

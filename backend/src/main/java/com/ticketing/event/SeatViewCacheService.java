@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
@@ -40,7 +41,8 @@ public class SeatViewCacheService {
         List<SeatSnapshot> list =
                 seatRepository.findByEventId(eventId).stream().map(SeatSnapshot::from).toList();
         try {
-            bucket.set(objectMapper.writeValueAsString(list));
+            // Short TTL so load tests and dashboards cannot diverge from DB for long if an invalidate is missed.
+            bucket.set(objectMapper.writeValueAsString(list), 5, TimeUnit.SECONDS);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to cache seat map", e);
         }

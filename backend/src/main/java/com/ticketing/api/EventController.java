@@ -45,8 +45,16 @@ public class EventController {
         return eventRepository.findById(id).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
     }
 
+    /**
+     * Seat list for an event. By default uses a short-lived Redis cache (see {@link SeatViewCacheService}).
+     * Pass {@code refresh=true} to bypass stale cache (e.g. nGrinder scenario F inventory checks vs DB-backed heatmap).
+     */
     @GetMapping("/{id}/seats")
-    public List<SeatSnapshot> seats(@PathVariable Long id) {
+    public List<SeatSnapshot> seats(
+            @PathVariable Long id, @RequestParam(name = "refresh", defaultValue = "false") boolean refresh) {
+        if (refresh) {
+            seatViewCacheService.invalidate(id);
+        }
         return seatViewCacheService.getSeats(id);
     }
 

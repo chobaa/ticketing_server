@@ -27,8 +27,19 @@ if ($files.Count -eq 0) {
 Write-Host "Uploading $($files.Count) scripts to $ControllerBaseUrl ..."
 
 foreach ($f in $files) {
-  $uploadUrl = "$ControllerBaseUrl/script/api/upload/$($f.Name)"
-  Write-Host "- $($f.Name)"
+  $baseName = $f.Name
+  # If a previous manual upload created a flat GROOVY_SCRIPT at the root, re-upload would fail
+  # ("tried to create folder ... It's file"). Remove the SVN path root first; ignore missing entries.
+  $delUrl = "$ControllerBaseUrl/script/api/$baseName"
+  try {
+    $del = Invoke-WebRequest -Uri $delUrl -Method Delete -Headers $headers -UseBasicParsing
+    if ($del.StatusCode -eq 200) { Write-Host "  (removed existing $baseName for clean upload)" }
+  } catch {
+    # 404 / not found is fine
+  }
+
+  $uploadUrl = "$ControllerBaseUrl/script/api/upload/$baseName"
+  Write-Host "- $baseName"
   # nGrinder expects multipart form fields: description, uploadFile
   $client = [System.Net.Http.HttpClient]::new()
   try {

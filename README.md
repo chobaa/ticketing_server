@@ -131,6 +131,32 @@ docker-compose.yml
 - [docs/change-notes-review.md](./docs/change-notes-review.md) — 검토용 누적 메모  
 - [docs/change-notes-ops-loadtest-metrics.md](./docs/change-notes-ops-loadtest-metrics.md) — Ops·부하·메트릭 관련 변경 요약
 
+## 최근 변경 요약 (Ops / nGrinder / 좌석 조회)
+
+다음은 본 브랜치에서 추가·수정된 동작을 한곳에 모은 것입니다(세부는 커밋 로그·`docs/` 참고).
+
+| 영역 | 내용 |
+|------|------|
+| **Ops** | 시나리오 A~F, runId·run-metrics, 결제 전역+베이스라인 Δ, Grafana 4종 링크(Funnel 포함), nGrinder 상태 폴링 5초 간격(컨트롤러 `admin is logined` 로그 빈도 완화) |
+| **runId** | `NgrinderDashboardController`가 `param`에 `runId` 주입, Groovy가 `X-LoadTest-RunId` 전송, `RequestDebugContextFilter`·`RunScopedMetricsStore`·`GET /api/dashboard/run-metrics` |
+| **IP 레이트리밋** | 동일 IP에서 대량 가입/로그인 시 429 완화: `POST /api/auth/register`, `/api/auth/login`은 별도 Redis 키·높은 상한(일반 `/api` 한도와 분리) |
+| **시나리오 F (Groovy)** | `beforeThread` 지터, `registerOrLogin` 재시도, 매진 감지 시 루프 조기 종료, `param`의 `grinder.properties` fallback |
+| **좌석 API** | `GET /api/events/{id}/seats?refresh=true` 시 캐시 무효화 후 DB 재조회. `SeatViewCacheService`는 캐시 **5초 TTL**로 오래 낡은 스냅샷 완화 |
+| **nGrinder 업로드** | `upload-scripts.ps1`가 업로드 전 `DELETE /script/api/{파일명}`로 기존 엔트리 제거(루트에 파일만 있어 `script should exist` 나는 경우 대비) |
+
+## 알려진 제한·미해결 (확인 필요)
+
+아래는 **현재까지 보고되었으나, 환경·재현 조건에 따라 여전히 재발할 수 있는** 구간입니다. 원인 가설과 확인 순서를 적어 둡니다.
+
+| 증상 | 가설·확인 순서 |
+|------|----------------|
+| **시나리오 F가 매진 후에도 길게 돌거나, Ops 히트맵과 스크립트 판단이 엇갈림** | 히트맵은 DB 기반, 스크립트는 `/seats`를 사용. `?refresh=true`·캐시 TTL로 맞췄으나, **에이전트가 치는 `baseUrl`이 Ops가 보는 백엔드와 다르거나**(다른 인스턴스/오래된 컨테이너), **스크립트가 컨트롤러에 재업로드되지 않은** 경우 이전 동작이 남을 수 있음 → `upload-scripts.ps1` 재실행·백엔드 재기동·단일 `baseUrl` 통일 확인. |
+| **`script should exist` (nGrinder)** | 컨트롤러 SVN에 스크립트가 없거나, **파일만 있고 `이름.groovy/이름.groovy` DIR 구조가 아닐 때** 발생. `upload-scripts.ps1`로 전부 다시 올리기(`docker compose down -v`로 nGrinder 볼륨이 초기화된 경우 필수). |
+| **`stop_by_error`** | Groovy `beforeThread`·`@Test`에서 미처리 예외(로그인 실패, `eventId` 누락 등). IP 레이트리밋·재시도를 완화했으나, **호스트 실행 + 기본 `application.yml` 레이트리밋**이면 여전히 429 가능 → `docker-compose`의 `RATE_LIMIT_*` 또는 일시적으로 `RATE_LIMIT_ENABLED=false`로 분리 검증. |
+| **nGrinder `admin is logined` 반복 로그** | 백엔드가 Basic 인증으로 상태 API를 폴링할 때마다 컨트롤러가 INFO로 남김. Ops 폴링 간격을 늘렸을 뿐, **로그 자체를 없애지는 못함**(컨트롤러 로그 레벨 조정 필요). |
+
+추가로 재현·로그(nGrinder 테스트 로그, 백엔드 `runId` 포함 access 로그, `GET .../seats?refresh=true` 응답 샘플)를 이슈에 붙이면 원인 좁히기에 유리합니다.
+
 ## 마무리 체크리스트 (README·녹화·노션)
 
 README는 위 내용으로 **현재 구성과 URL**을 반영한 상태입니다. 남은 작업은 팀/발표용 자료 정리입니다.

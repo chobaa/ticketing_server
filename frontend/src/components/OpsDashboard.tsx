@@ -444,7 +444,8 @@ export function OpsDashboard() {
   useEffect(() => {
     if (!testId) return
     void refreshNgrinder(testId)
-    const t = window.setInterval(() => void refreshNgrinder(testId), 2000)
+    // nGrinder logs "admin logined" on every Basic-auth request; 5s reduces noise vs 2s while staying responsive.
+    const t = window.setInterval(() => void refreshNgrinder(testId), 5000)
     return () => window.clearInterval(t)
   }, [testId])
 

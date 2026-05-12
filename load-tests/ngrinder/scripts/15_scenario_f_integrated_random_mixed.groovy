@@ -114,6 +114,8 @@ class ScenarioFIntegratedRandomMixed {
 
         int threadIdx = (grinder.threadNumber as int)
         int procNum = (grinder.getProcessNumber() as int)
+        // Spread auth across wall-clock so IP rate limits / DB are not hit by a single thundering herd.
+        jitterSleep(0, Math.min(25_000, threadIdx * 60 + procNum * 400))
 
         String userPassword = param("userPassword", "password123456")
         String userEmail = "mix_${runId}_${procNum}_${threadIdx}@example.com"
@@ -165,6 +167,11 @@ class ScenarioFIntegratedRandomMixed {
                     runSliceE()
                     ticksE.incrementAndGet()
                     break
+            }
+
+            if (noAvailableSeats()) {
+                grinder.logger.info("Scenario F early exit: no AVAILABLE seats (after slice, inventory exhausted)")
+                break
             }
 
             jitterSleep(10, 120)
@@ -307,9 +314,11 @@ class ScenarioFIntegratedRandomMixed {
         return (seats.get(idx).id as long)
     }
 
+    /** Uses {@code refresh=true} so inventory matches DB (heatmap uses DB; cached /seats could stay stale indefinitely). */
     private List loadSeats() {
         try {
-            HTTPResponse resp = requestMix.GET(baseUrl + "/api/events/" + eventId + "/seats", [:], headersAuthJson)
+            String url = baseUrl + "/api/events/" + eventId + "/seats?refresh=true"
+            HTTPResponse resp = requestMix.GET(url, [:], headersAuthJson)
             if (resp.getStatusCode() != 200) return null
             return new JsonSlurper().parseText(resp.getBodyText()) as List
         } catch (Exception ignored) {
@@ -317,11 +326,23 @@ class ScenarioFIntegratedRandomMixed {
         }
     }
 
-    /** True when seat list has no AVAILABLE rows (SOLD/HELD/etc. only). Ends wall-clock loop early. */
+    /**
+     * True when a successful seat list has no AVAILABLE rows (SOLD/HELD/etc. only).
+     * Retries briefly on transient null responses so we do not spin the full duration after sell-out.
+     */
     private boolean noAvailableSeats() {
-        List seats = loadSeats()
-        if (seats == null || seats.isEmpty()) return false
-        return !seats.any { (it.status as String)?.equalsIgnoreCase("AVAILABLE") }
+        for (int attempt = 0; attempt < 4; attempt++) {
+            List seats = loadSeats()
+            if (seats == null) {
+                sleepMs(80 + ThreadLocalRandom.current().nextInt(120))
+                continue
+            }
+            if (seats.isEmpty()) {
+                return true
+            }
+            return !seats.any { (it.status as String)?.equalsIgnoreCase("AVAILABLE") }
+        }
+        return false
     }
 
     private void reserveFirstAvailable(String admissionToken) {
@@ -373,14 +394,28 @@ class ScenarioFIntegratedRandomMixed {
     }
 
     private static String registerOrLogin(String email, String password) {
-        String token = login(email, password)
-        if (token != null) return token
+        int maxAttempts = 80
         Map<String, String> jsonHeaders = ["Content-Type": "application/json"]
         Map<String, Object> registerBody = ["email": email, "password": password]
-        setupRequest.POST(baseUrl + "/api/auth/register", registerBody, jsonHeaders)
-        token = login(email, password)
-        if (token == null) throw new IllegalStateException("login failed after register: email=" + email)
-        return token
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                String token = login(email, password)
+                if (token != null && !token.isBlank()) return token
+                HTTPResponse reg = setupRequest.POST(baseUrl + "/api/auth/register", registerBody, jsonHeaders)
+                int sc = reg.getStatusCode()
+                if (sc != 200 && sc != 201 && sc != 409) {
+                    grinder.logger.warn("register HTTP {} for {} (attempt {}/{})", sc, email, attempt, maxAttempts)
+                }
+                token = login(email, password)
+                if (token != null && !token.isBlank()) return token
+            } catch (Exception ex) {
+                if (attempt == 1 || attempt % 15 == 0) {
+                    grinder.logger.warn("registerOrLogin attempt {} for {}: {}", attempt, email, ex.message)
+                }
+            }
+            sleepMs(120 + ThreadLocalRandom.current().nextInt(380 + Math.min(800, attempt * 15)))
+        }
+        throw new IllegalStateException("login/register exhausted retries: email=" + email)
     }
 
     private static String login(String email, String password) {

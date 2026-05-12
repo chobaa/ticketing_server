@@ -45,14 +45,23 @@ public class RateLimitFilter extends OncePerRequestFilter {
             HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         long now = System.currentTimeMillis();
+        String path = request.getRequestURI();
 
         String ip = clientIp(request);
         if (ip != null && !ip.isBlank()) {
-            RateLimitResult ipRes = service.check(
-                    "rl:ip:{" + ip + "}",
-                    now,
-                    props.ip().windowMs(),
-                    props.ip().requests());
+            // nGrinder (and similar) agents share one public IP while creating many users in parallel.
+            // Keep the default strict /api bucket, but use a separate Redis key with a much higher ceiling
+            // for auth bootstrap endpoints only.
+            boolean authBootstrap =
+                    "POST".equalsIgnoreCase(request.getMethod())
+                            && (path.endsWith("/api/auth/register") || path.endsWith("/api/auth/login"));
+            long ipWindow = props.ip().windowMs();
+            int ipBudget =
+                    authBootstrap
+                            ? Math.max(5_000, Math.min(100_000, props.ip().requests() * 500))
+                            : props.ip().requests();
+            String ipKey = authBootstrap ? ("rl:ip:auth:{" + ip + "}") : ("rl:ip:{" + ip + "}");
+            RateLimitResult ipRes = service.check(ipKey, now, ipWindow, ipBudget);
             if (!ipRes.allowed()) {
                 businessMetrics.incRateLimitRejected("ip");
                 reject(response, ipRes.retryAfterMs());

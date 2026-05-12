@@ -1,0 +1,13 @@
+global:
+  resolve_timeout: 1m
+
+route:
+  receiver: "log-only"
+  group_by: ["alertname"]
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 2h
+
+receivers:
+  - name: "log-only"
+

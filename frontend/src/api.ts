@@ -125,7 +125,41 @@ export const api = {
       paymentSettleSkippedAlreadyTerminalTotal?: number
       paymentRequestedExpectedTotal?: number
       paymentRequestedMismatch?: number
+      paymentWipFromCounters?: number
+      queueEnteredTotal?: number
+      admissionIssuedTotal?: number
+      seatLockFailedTotal?: number
+      reservationExpiredTotal?: number
+      rateLimitRejectedTotal?: number
+      httpServerRequestTotal?: number
+      reservationAttemptedTotal?: number
+      reservationSucceededTotal?: number
+      reservationFailedInvalidAdmissionTotal?: number
+      reservationFailedSeatNotAvailableTotal?: number
+      reservationFailedBadSeatTotal?: number
+      clusterCountersEnabled?: boolean
     }>(`/api/dashboard/business-metrics`),
+
+  dashboardRunMetrics: (runId: string) =>
+    req<{
+      runId: string
+      found: boolean
+      time: string
+      queueEnteredTotal?: number
+      admissionIssuedTotal?: number
+      seatLockFailedTotal?: number
+      reservationExpiredTotal?: number
+      rateLimitRejectedTotal?: number
+      httpServerRequestTotal?: number
+      reservationAttemptedTotal?: number
+      reservationSucceededTotal?: number
+      reservationFailedInvalidAdmissionTotal?: number
+      reservationFailedSeatNotAvailableTotal?: number
+      reservationFailedBadSeatTotal?: number
+      paymentRequestedTotal?: number
+      paymentSucceededTotal?: number
+      paymentFailedTotal?: number
+    }>(`/api/dashboard/run-metrics?runId=${encodeURIComponent(runId)}`),
 
   ngrinderStatus: (id: number) => req<NgrinderStatusResponse>(`/api/dashboard/ngrinder/tests/${id}/status`),
   ngrinderPerf: (id: number, dataType = 'TPS,Errors,Mean_Test_Time', imgWidth = 800) =>
@@ -140,6 +174,67 @@ export const api = {
       `/api/dashboard/ngrinder/payment-requests/start?requestedCount=${encodeURIComponent(String(requestedCount))}`,
       { method: 'POST' },
     ),
+
+  ngrinderStartScenario: (
+    scenario: 'A' | 'B' | 'C' | 'D' | 'E' | 'F',
+    opts: {
+      baseUrl?: string
+      vusers?: number
+      threads?: number
+      eventSeatCount?: number
+      testDurationSec?: number
+      sleepMs?: number
+      crowdMultiplier?: number
+    } = {},
+  ) => {
+    const qs = new URLSearchParams()
+    qs.set('scenario', scenario)
+    if (opts.baseUrl) qs.set('baseUrl', opts.baseUrl)
+    if (typeof opts.vusers === 'number') qs.set('vusers', String(opts.vusers))
+    if (typeof opts.threads === 'number') qs.set('threads', String(opts.threads))
+    if (typeof opts.eventSeatCount === 'number') qs.set('eventSeatCount', String(opts.eventSeatCount))
+    if (typeof opts.testDurationSec === 'number') qs.set('testDurationSec', String(opts.testDurationSec))
+    if (typeof opts.sleepMs === 'number') qs.set('sleepMs', String(opts.sleepMs))
+    if (typeof opts.crowdMultiplier === 'number') qs.set('crowdMultiplier', String(opts.crowdMultiplier))
+    return req<NgrinderPerfTestEntity>(`/api/dashboard/ngrinder/scenarios/start?${qs.toString()}`, { method: 'POST' })
+  },
+
+  opsSummary: () =>
+    req<{
+      time: string
+      queueDepth: number
+      pendingReservations: number
+      processingPayments: number
+      activeUsersEstimate: number
+      seatsTotal: number
+      seatsAvailable: number
+      seatsHeld: number
+      seatsSold: number
+      seatsRemainingRatio: number
+    }>(`/api/ops/summary`),
+
+  opsOpenEvents: () => req<Array<{ id: number; name: string }>>(`/api/ops/events/open`),
+
+  opsHeatmap: (eventId: number) =>
+    req<Array<{ id: number; seatNumber: string; status: string; grade?: string }>>(
+      `/api/ops/events/${eventId}/heatmap`,
+    ),
+
+  opsEventSummary: (eventId: number) =>
+    req<{
+      time: string
+      eventId: number
+      queueDepth: number
+      pendingReservations: number
+      processingPayments: number
+      activeUsersEstimate: number
+      seatsTotal: number
+      seatsAvailable: number
+      seatsHeld: number
+      seatsSold: number
+      seatsRemainingRatio: number
+      seatsOccupiedRatio: number
+    }>(`/api/ops/events/${eventId}/summary`),
 }
 
 export type DepStatus = { ok: boolean; latencyMs: number; error?: string }
@@ -217,6 +312,7 @@ export interface NgrinderPerfTestEntity {
   id?: number
   testName?: string
   status?: { name?: NgrinderTestStatusName }
+  loadTestRunId?: string
 }
 
 export interface NgrinderStatusResponse {

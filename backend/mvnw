@@ -1,0 +1,45 @@
+#!/bin/sh
+# Apache Maven Wrapper
+# https://maven.apache.org/wrapper/
+
+set -eu
+
+BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+WRAPPER_DIR="$BASE_DIR/.mvn/wrapper"
+PROPS_FILE="$WRAPPER_DIR/maven-wrapper.properties"
+
+if [ ! -f "$PROPS_FILE" ]; then
+  echo "Missing $PROPS_FILE" >&2
+  exit 1
+fi
+
+distributionUrl=$(grep -E '^distributionUrl=' "$PROPS_FILE" | sed -e 's/^distributionUrl=//')
+wrapperUrl=$(grep -E '^wrapperUrl=' "$PROPS_FILE" | sed -e 's/^wrapperUrl=//')
+
+MAVEN_USER_HOME="${MAVEN_USER_HOME:-$HOME/.m2}"
+WRAPPER_JAR="$WRAPPER_DIR/maven-wrapper.jar"
+
+download() {
+  url="$1"
+  out="$2"
+  mkdir -p "$(dirname "$out")"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$out"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q "$url" -O "$out"
+  else
+    echo "Need curl or wget to download Maven Wrapper" >&2
+    exit 1
+  fi
+}
+
+if [ ! -f "$WRAPPER_JAR" ]; then
+  download "$wrapperUrl" "$WRAPPER_JAR"
+fi
+
+exec java -classpath "$WRAPPER_JAR" \
+  -Dmaven.multiModuleProjectDirectory="$BASE_DIR" \
+  org.apache.maven.wrapper.MavenWrapperMain \
+  "$@"
+

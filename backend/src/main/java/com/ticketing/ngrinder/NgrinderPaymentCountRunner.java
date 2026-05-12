@@ -1,6 +1,7 @@
 package com.ticketing.ngrinder;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.ticketing.metrics.ClusterBusinessMetricsBridge;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 public class NgrinderPaymentCountRunner {
     private final MeterRegistry meterRegistry;
     private final NgrinderClient ngrinderClient;
+    private final ClusterBusinessMetricsBridge clusterCounters;
 
     /**
      * Safety stop: if the app's settled delta reaches target (and inflight becomes 0),
@@ -78,7 +80,10 @@ public class NgrinderPaymentCountRunner {
     }
 
     public long currentRequestedTotalRounded() {
-        return Math.round(counter("ticketing.payment.requested.total"));
+        return Math.round(
+                clusterOrLocal(
+                        ClusterBusinessMetricsBridge.SUFFIX_PAYMENT_REQUESTED,
+                        "ticketing.payment.requested.total"));
     }
 
     /**
@@ -199,19 +204,41 @@ public class NgrinderPaymentCountRunner {
 
     // kept for possible future "metric-based stop" use
     private double paymentSettledTotal() {
-        return counter("ticketing.payment.succeeded.total") + counter("ticketing.payment.failed.total");
+        return clusterOrLocal(
+                        ClusterBusinessMetricsBridge.SUFFIX_PAYMENT_SUCCEEDED, "ticketing.payment.succeeded.total")
+                + clusterOrLocal(
+                        ClusterBusinessMetricsBridge.SUFFIX_PAYMENT_FAILED, "ticketing.payment.failed.total");
     }
 
     private double paymentInflight() {
+        if (clusterCounters.isEnabled()) {
+            double req =
+                    clusterOrLocal(
+                            ClusterBusinessMetricsBridge.SUFFIX_PAYMENT_REQUESTED,
+                            "ticketing.payment.requested.total");
+            return Math.max(0.0, req - paymentSettledTotal());
+        }
         // prefer the gauge if present, but fall back to requested - settled
         io.micrometer.core.instrument.Gauge g = meterRegistry.find("ticketing.payment.inflight").gauge();
         if (g != null) return g.value();
         return Math.max(0.0, counter("ticketing.payment.requested.total") - paymentSettledTotal());
     }
 
+    /** Sum every counter row with this name (same semantics as {@code DashboardRealtimeController}). */
     private double counter(String name) {
-        Counter c = meterRegistry.find(name).counter();
-        return c == null ? 0.0 : c.count();
+        double sum = 0.0;
+        for (Counter c : meterRegistry.find(name).counters()) {
+            sum += c.count();
+        }
+        return sum;
+    }
+
+    private double clusterOrLocal(String clusterSuffix, String micrometerName) {
+        long v = clusterCounters.readLong(clusterSuffix);
+        if (v == Long.MIN_VALUE || v == Long.MAX_VALUE) {
+            return counter(micrometerName);
+        }
+        return (double) v;
     }
 }
 

@@ -6,8 +6,10 @@ services:
       MYSQL_USER: ticketing
       MYSQL_PASSWORD: ticketing
       MYSQL_ROOT_PASSWORD: root
-    ports:
-      - "3306:3306"
+    # NOTE: Do not expose 3306 by default (Windows often reserves/conflicts it).
+    # If you need host access, uncomment or map to a different port (e.g. "13306:3306").
+    # ports:
+    #   - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -291,6 +293,8 @@ services:
       RATE_LIMIT_IP_WINDOW_MS: "1000"
       RATE_LIMIT_USER_REQUESTS: "10000"
       RATE_LIMIT_USER_WINDOW_MS: "1000"
+      # Sum business counters in Redis for /api/dashboard/business-metrics (set true when running multiple backend replicas).
+      TICKETING_METRICS_CLUSTER_COUNTERS_ENABLED: "true"
     ports:
       - "8080:8080"
 
@@ -298,11 +302,20 @@ services:
     image: prom/prometheus:v2.54.1
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
     ports:
       - "9090:9090"
     depends_on:
       backend:
         condition: service_healthy
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ./docker/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
 
   grafana:
     image: grafana/grafana:11.5.2
@@ -323,6 +336,26 @@ services:
       - grafana_data:/var/lib/grafana
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+  loki:
+    image: grafana/loki:3.4.2
+    command: ["-config.file=/etc/loki/config.yml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./docker/loki/loki.yml:/etc/loki/config.yml:ro
+      - loki_data:/loki
+
+  promtail:
+    image: grafana/promtail:3.4.2
+    command: ["-config.file=/etc/promtail/config.yml"]
+    depends_on:
+      - loki
+    volumes:
+      - ./docker/loki/promtail.yml:/etc/promtail/config.yml:ro
+      # Read docker containers logs
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
   frontend:
     build:
@@ -358,7 +391,68 @@ services:
     # If you want more load, scale this service:
     # docker compose up -d --scale agent=3
 
+  # --- Infra exporters (enabled by default) ---
+  redis-exporter-1:
+    image: oliver006/redis_exporter:v1.68.0
+    command: ["--redis.addr=redis://redis-node-1:7000"]
+    depends_on:
+      redis-node-1:
+        condition: service_healthy
+
+  redis-exporter-2:
+    image: oliver006/redis_exporter:v1.68.0
+    command: ["--redis.addr=redis://redis-node-2:7001"]
+    depends_on:
+      redis-node-2:
+        condition: service_healthy
+
+  redis-exporter-3:
+    image: oliver006/redis_exporter:v1.68.0
+    command: ["--redis.addr=redis://redis-node-3:7002"]
+    depends_on:
+      redis-node-3:
+        condition: service_healthy
+
+  redis-exporter-4:
+    image: oliver006/redis_exporter:v1.68.0
+    command: ["--redis.addr=redis://redis-node-4:7003"]
+    depends_on:
+      redis-node-4:
+        condition: service_healthy
+
+  redis-exporter-5:
+    image: oliver006/redis_exporter:v1.68.0
+    command: ["--redis.addr=redis://redis-node-5:7004"]
+    depends_on:
+      redis-node-5:
+        condition: service_healthy
+
+  redis-exporter-6:
+    image: oliver006/redis_exporter:v1.68.0
+    command: ["--redis.addr=redis://redis-node-6:7005"]
+    depends_on:
+      redis-node-6:
+        condition: service_healthy
+
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.17.2
+    environment:
+      # Format: user:password@(host:port)/
+      DATA_SOURCE_NAME: ticketing:ticketing@(mysql:3306)/
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.9.0
+    command:
+      - "--kafka.server=kafka:9092"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
 volumes:
   mysql_data:
   grafana_data:
+  loki_data:
   ngrinder_controller_data:

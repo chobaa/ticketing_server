@@ -3,11 +3,15 @@ package com.ticketing.api;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.ticketing.api.dto.CreateEventRequest;
+import com.ticketing.event.Event;
+import com.ticketing.event.EventService;
 import com.ticketing.ngrinder.NgrinderClient;
 import com.ticketing.ngrinder.NgrinderPaymentCountRunner;
 import com.ticketing.payment.PaymentQueueMaintenanceService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -16,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +32,7 @@ public class NgrinderDashboardController {
     private final NgrinderClient ngrinderClient;
     private final NgrinderPaymentCountRunner paymentCountRunner;
     private final PaymentQueueMaintenanceService paymentQueueMaintenanceService;
+    private final EventService eventService;
 
     @Value("${ticketing.ngrinder.target-base-url:http://host.docker.internal:8080}")
     private String defaultTargetBaseUrl;
@@ -155,10 +161,18 @@ public class NgrinderDashboardController {
                     for (JsonNode s : scriptArr) {
                         if (s != null && fileName.equals(s.path("fileName").asText(null))) {
                             String p = s.path("path").asText(null);
-                            if (p != null && !p.isBlank()) return p;
+                            if (p != null && !p.isBlank()) {
+                                p = p.trim();
+                                // Some nGrinder versions return only "fileName" (no folder prefix),
+                                // but the perftest API expects "fileName/fileName" for scriptName.
+                                if (!p.contains("/") && p.endsWith(".groovy")) {
+                                    return p + "/" + p;
+                                }
+                                return p;
+                            }
                         }
                     }
-                    return fileName;
+                    return fileName.endsWith(".groovy") ? (fileName + "/" + fileName) : fileName;
                 };
 
         switch (key) {
@@ -541,6 +555,239 @@ public class NgrinderDashboardController {
             ((ObjectNode) created).put("requestedCountTarget", requestedCount);
         }
         return ResponseEntity.ok(created);
+    }
+
+    /**
+     * Start one of the scenario scripts (A~F).
+     * <p>
+     * Scenarios are implemented as groovy scripts in nGrinder controller's script repository:
+     * - A: 10_scenario_a_thundering_herd.groovy
+     * - B: 11_scenario_b_hot_key_lock.groovy
+     * - C: 12_scenario_c_retry_storm.groovy
+     * - D: 13_scenario_d_zombie_ttl.groovy
+     * - E: 14_scenario_e_baseline_ticketing.groovy
+     * - F: 15_scenario_f_integrated_random_mixed.groovy
+     */
+    @PostMapping("/scenarios/start")
+    public ResponseEntity<JsonNode> startScenario(
+            @RequestParam String scenario,
+            @RequestParam(required = false) String baseUrl,
+            @RequestParam(required = false) Integer vusers,
+            @RequestParam(required = false) Integer threads,
+            @RequestParam(required = false) Integer eventSeatCount,
+            @RequestParam(required = false) Integer testDurationSec,
+            @RequestParam(required = false) Integer sleepMs,
+            @RequestParam(required = false) Integer crowdMultiplier) {
+        if (scenario == null || scenario.isBlank()) {
+            ObjectNode err = JsonNodeFactory.instance.objectNode();
+            err.put("error", "scenario is required (A|B|C|D|E|F)");
+            return ResponseEntity.badRequest().body(err);
+        }
+        String sc = scenario.trim().toUpperCase();
+        if (!List.of("A", "B", "C", "D", "E", "F").contains(sc)) {
+            ObjectNode err = JsonNodeFactory.instance.objectNode();
+            err.put("error", "unknown scenario: " + scenario);
+            err.put("hint", "use scenario=A|B|C|D|E|F");
+            return ResponseEntity.badRequest().body(err);
+        }
+        if (baseUrl == null || baseUrl.isBlank()) {
+            baseUrl = defaultTargetBaseUrl;
+        }
+
+        JsonNode scripts = ngrinderClient.listScripts();
+        JsonNode scriptArr =
+                (scripts != null && scripts.isArray())
+                        ? scripts
+                        : (scripts != null && scripts.has("value") ? scripts.get("value") : null);
+        boolean hasAnyScript = scriptArr != null && scriptArr.isArray() && scriptArr.size() > 0;
+        if (!hasAnyScript) {
+            ObjectNode err = JsonNodeFactory.instance.objectNode();
+            err.put("error", "nGrinder script repository is empty. Upload scripts first (prevents 'script should exist').");
+            err.put("hint", "Run: .\\\\load-tests\\\\ngrinder\\\\upload-scripts.ps1 -ControllerBaseUrl http://localhost:19080 -Username admin -Password admin");
+            return ResponseEntity.badRequest().body(err);
+        }
+
+        java.util.function.Function<String, String> scriptPath =
+                (String fileName) -> {
+                    if (scriptArr == null || !scriptArr.isArray()) return fileName;
+                    for (JsonNode s : scriptArr) {
+                        if (s != null && fileName.equals(s.path("fileName").asText(null))) {
+                            String p = s.path("path").asText(null);
+                            if (p != null && !p.isBlank()) return p;
+                        }
+                    }
+                    return fileName;
+                };
+
+        int multiplier = (crowdMultiplier == null || crowdMultiplier < 1) ? 10 : crowdMultiplier;
+        int vu = (vusers == null || vusers < 1) ? 50 : vusers;
+        int th = (threads == null || threads < 1) ? vu : threads;
+        // nGrinder runs at most `threads` concurrent workers; if threads < vusers, only a subset of
+        // VUsers ever execute (looks like "3 runs then done"). Keep threads aligned with vusers.
+        th = Math.max(th, vu);
+
+        // Create a dedicated LOAD_TEST event so:
+        // - test traffic doesn't mix with real/public events
+        // - ops heatmap can immediately render the event seats
+        int seatCountForEvent = (eventSeatCount == null || eventSeatCount < 1) ? 400 : eventSeatCount;
+        if ("B".equals(sc)) seatCountForEvent = 1;
+        if ("D".equals(sc) && seatCountForEvent < vu) {
+            // Scenario D needs enough seats to avoid hot-key collision dominating TTL behavior.
+            seatCountForEvent = vu;
+        }
+        if ("F".equals(sc)) {
+            int wantVu = (vusers == null || vusers < 1) ? 2000 : Math.min(5000, Math.max(1, vusers));
+            if (eventSeatCount == null || eventSeatCount < 1) {
+                seatCountForEvent = Math.min(5000, Math.max(800, wantVu));
+            } else {
+                seatCountForEvent = Math.min(5000, eventSeatCount);
+            }
+            if (seatCountForEvent < wantVu) {
+                seatCountForEvent = Math.min(5000, wantVu);
+            }
+            vu = wantVu;
+            th = vu;
+        }
+        // A: script reserves at most one seat per vuser; a modest pool keeps the ops heatmap readable.
+        if ("A".equals(sc) && (eventSeatCount == null || eventSeatCount < 1)) {
+            seatCountForEvent = Math.max(32, Math.min(200, vu + 24));
+        }
+        // C: GET /seats polling only; keep seat list small so JSON stays light (rate-limit story, not inventory size).
+        if ("C".equals(sc) && (eventSeatCount == null || eventSeatCount < 1)) {
+            seatCountForEvent = Math.max(24, Math.min(128, vu * 4));
+        }
+        // D: one seat per thread index modulo seat count; default pool modest vs blind 400, still >= vu enforced above.
+        if ("D".equals(sc) && (eventSeatCount == null || eventSeatCount < 1)) {
+            seatCountForEvent = Math.max(vu, Math.min(300, vu * 2));
+        }
+        // E: baseline crowd = seats * multiplier; keep default inventory moderate when callers omit seat count.
+        if ("E".equals(sc) && (eventSeatCount == null || eventSeatCount < 1)) {
+            seatCountForEvent = 48;
+        }
+        String now = LocalDateTime.now().toString();
+        CreateEventRequest createEvent =
+                new CreateEventRequest(
+                        "LOAD_TEST " + sc + " " + now,
+                        "load-test",
+                        LocalDateTime.now().plusMinutes(5).toString(),
+                        seatCountForEvent,
+                        new BigDecimal("100.00"),
+                        "R",
+                        "LOAD_TEST");
+        Event ev = eventService.create(createEvent);
+
+        // Scenario E defaults: crowd ~= seats * multiplier (10x by default)
+        if ("E".equals(sc) && (vusers == null || vusers < 1)) {
+            vu = Math.max(1, Math.min(5000, seatCountForEvent * multiplier));
+            th = vu;
+        }
+
+        ObjectNode body = JsonNodeFactory.instance.objectNode();
+        body.put("status", "READY");
+        body.put("agentCount", 1);
+        body.put("processes", 1);
+        body.put("samplingInterval", 1);
+        body.put("ignoreTooManyError", true);
+        body.put("threads", th);
+        body.put("vuserPerAgent", vu);
+
+        StringBuilder param = new StringBuilder();
+        param.append("baseUrl=").append(baseUrl).append(";");
+        param.append("eventId=").append(ev.getId()).append(";");
+        // Used for log drill-down (Loki/console search). Kept out of Prometheus labels.
+        String runId = java.util.UUID.randomUUID().toString();
+        param.append("runId=").append(runId).append(";");
+        param.append("admissionMaxWaitSec=30;");
+        param.append("admissionPollIntervalMs=200;");
+
+        long durationMs = 60_000L;
+
+        switch (sc) {
+            case "A" -> {
+                body.put("testName", "Scenario A (Open Run Spike) " + now);
+                body.put("scriptName", "10_scenario_a_thundering_herd.groovy/10_scenario_a_thundering_herd.groovy");
+                int durSec = (testDurationSec == null || testDurationSec < 1) ? 20 : testDurationSec;
+                param.append("testDurationSec=").append(durSec).append(";");
+                // Duration mode: we want sustained admission polling pressure after the initial join spike.
+                body.put("threshold", "D");
+                durationMs = (durSec * 1000L) + 15_000L;
+            }
+            case "B" -> {
+                body.put("testName", "Scenario B (Hot Key / Lock) " + now);
+                body.put("scriptName", "11_scenario_b_hot_key_lock.groovy/11_scenario_b_hot_key_lock.groovy");
+                // B is intentionally hot-key: single seat.
+                body.put("threshold", "R");
+                body.put("runCount", 1);
+                durationMs = 60_000L;
+            }
+            case "C" -> {
+                body.put("testName", "Scenario C (Retry Storm) " + now);
+                body.put("scriptName", "12_scenario_c_retry_storm.groovy/12_scenario_c_retry_storm.groovy");
+                int durSec = (testDurationSec == null || testDurationSec < 1) ? 20 : testDurationSec;
+                param.append("testDurationSec=").append(durSec).append(";");
+                body.put("threshold", "R");
+                body.put("runCount", 1);
+                durationMs = (durSec * 1000L) + 15_000L;
+            }
+            case "D" -> {
+                body.put("testName", "Scenario D (Zombie TTL) " + now);
+                body.put("scriptName", "13_scenario_d_zombie_ttl.groovy/13_scenario_d_zombie_ttl.groovy");
+                int sm = (sleepMs == null || sleepMs < 0) ? 70_000 : sleepMs;
+                param.append("sleepMs=").append(sm).append(";");
+                body.put("threshold", "R");
+                body.put("runCount", 1);
+                durationMs = sm + 30_000L;
+            }
+            case "E" -> {
+                body.put("testName", "Scenario E (Baseline Ticketing) " + now);
+                body.put("scriptName", "14_scenario_e_baseline_ticketing.groovy/14_scenario_e_baseline_ticketing.groovy");
+                body.put("threshold", "R");
+                body.put("runCount", 1);
+                // wait for payment simulation to settle (default 120s in script)
+                param.append("progressMaxWaitSec=120;");
+                durationMs = 3 * 60_000L;
+            }
+            case "F" -> {
+                body.put("testName", "Scenario F (Integrated Random Mixed) " + now);
+                body.put("scriptName", "15_scenario_f_integrated_random_mixed.groovy/15_scenario_f_integrated_random_mixed.groovy");
+                int durSec = (testDurationSec == null || testDurationSec < 30) ? 180 : Math.min(3600, testDurationSec);
+                param.append("testDurationSec=").append(durSec).append(";");
+                param.append("ephemeralUserProbability=0.12;");
+                param.append("progressShortMaxAttempts=40;");
+                param.append("progressPollIntervalMs=200;");
+                body.put("threshold", "D");
+                durationMs = (durSec * 1000L) + 45_000L;
+            }
+            default -> {
+                ObjectNode err = JsonNodeFactory.instance.objectNode();
+                err.put("error", "unknown scenario: " + scenario);
+                return ResponseEntity.badRequest().body(err);
+            }
+        }
+
+        body.put("duration", durationMs);
+        body.put("param", param.toString());
+        try {
+            JsonNode created = ngrinderClient.createTest(body);
+            if (created != null && created.isObject()) {
+                ((ObjectNode) created).put("loadTestEventId", ev.getId());
+                ((ObjectNode) created).put("loadTestEventSeatCount", seatCountForEvent);
+                ((ObjectNode) created).put("loadTestScenario", sc);
+                ((ObjectNode) created).put("ngrinderVusers", vu);
+                ((ObjectNode) created).put("ngrinderThreads", th);
+                ((ObjectNode) created).put("loadTestRunId", runId);
+            }
+            return ResponseEntity.ok(created);
+        } catch (RestClientResponseException ex) {
+            ObjectNode err = JsonNodeFactory.instance.objectNode();
+            err.put("error", "nGrinder API call failed: " + ex.getStatusCode().value() + " " + ex.getStatusText());
+            String respBody = ex.getResponseBodyAsString();
+            if (respBody != null && !respBody.isBlank()) {
+                err.put("ngrinderBody", respBody.length() > 2000 ? respBody.substring(0, 2000) : respBody);
+            }
+            err.put("hint", "If running backend in Docker, set NGRINDER_BASE_URL to the controller service URL (not localhost). If auth fails, set NGRINDER_USERNAME/NGRINDER_PASSWORD.");
+            return ResponseEntity.status(ex.getStatusCode()).body(err);
+        }
     }
 
     /**

@@ -22,6 +22,7 @@ public class QueueService {
     private final RedissonClient redissonClient;
     private final EventRepository eventRepository;
     private final ReservationEventProducer reservationEventProducer;
+    private final com.ticketing.metrics.BusinessMetrics businessMetrics;
 
     @Value("${ticketing.queue.token-ttl-seconds}")
     private int tokenTtlSeconds;
@@ -42,6 +43,7 @@ public class QueueService {
         RScoredSortedSet<String> z = redissonClient.getScoredSortedSet(queueKey(eventId));
         double score = System.currentTimeMillis();
         z.add(score, String.valueOf(userId));
+        businessMetrics.incQueueEntered();
         Integer rank = z.rank(String.valueOf(userId));
         int position = rank != null ? rank + 1 : z.size();
         reservationEventProducer.publishQueueEnter(

@@ -9,7 +9,8 @@ import com.ticketing.messaging.dto.TicketReservedEvent;
 import com.ticketing.payment.Payment;
 import com.ticketing.payment.PaymentRepository;
 import com.ticketing.payment.ReservationSettlementService;
-import lombok.RequiredArgsConstructor;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,7 +24,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
 
 @Service
-@RequiredArgsConstructor
 public class ReservationService {
 
     private final RedissonClient redissonClient;
@@ -34,29 +34,74 @@ public class ReservationService {
     private final SeatViewCacheService seatViewCacheService;
     private final PaymentRepository paymentRepository;
     private final ReservationSettlementService reservationSettlementService;
+    private final com.ticketing.metrics.BusinessMetrics businessMetrics;
+
+    private final Timer reserveTimer;
+    private final Timer lockAcquireTimer;
 
     @Value("${ticketing.reservation.hold-ttl-minutes}")
     private int holdTtlMinutes;
 
+    public ReservationService(
+            RedissonClient redissonClient,
+            SeatRepository seatRepository,
+            ReservationRepository reservationRepository,
+            QueueService queueService,
+            ReservationEventProducer reservationEventProducer,
+            SeatViewCacheService seatViewCacheService,
+            PaymentRepository paymentRepository,
+            ReservationSettlementService reservationSettlementService,
+            com.ticketing.metrics.BusinessMetrics businessMetrics,
+            MeterRegistry meterRegistry) {
+        this.redissonClient = redissonClient;
+        this.seatRepository = seatRepository;
+        this.reservationRepository = reservationRepository;
+        this.queueService = queueService;
+        this.reservationEventProducer = reservationEventProducer;
+        this.seatViewCacheService = seatViewCacheService;
+        this.paymentRepository = paymentRepository;
+        this.reservationSettlementService = reservationSettlementService;
+        this.businessMetrics = businessMetrics;
+        this.reserveTimer =
+                Timer.builder("ticketing.reservation.reserve")
+                        .description("Reservation (seat hold) end-to-end latency inside service")
+                        .publishPercentileHistogram()
+                        .register(meterRegistry);
+        this.lockAcquireTimer =
+                Timer.builder("ticketing.reservation.seat_lock.acquire")
+                        .description("Redisson seat lock acquire latency (tryLock)")
+                        .publishPercentileHistogram()
+                        .register(meterRegistry);
+    }
+
     @Transactional
     public Reservation reserve(long userId, long eventId, long seatId, String admissionToken) {
+        Timer.Sample sample = Timer.start();
+        businessMetrics.incReservationAttempted();
         if (!queueService.validateAdmissionToken(eventId, userId, admissionToken)) {
+            businessMetrics.incReservationFailedInvalidAdmission();
             throw new IllegalStateException("Invalid or missing admission token");
         }
         String lockName = "lock:seat:" + eventId + ":" + seatId;
         RLock lock = redissonClient.getLock(lockName);
         try {
+            Timer.Sample lockSample = Timer.start();
             if (!lock.tryLock(0, TimeUnit.SECONDS)) {
+                lockSample.stop(lockAcquireTimer);
+                businessMetrics.incSeatLockFailed();
                 throw new IllegalStateException("Could not acquire seat lock");
             }
+            lockSample.stop(lockAcquireTimer);
             Seat seat =
                     seatRepository
                             .findByIdForUpdate(seatId)
                             .orElseThrow(() -> new IllegalArgumentException("Seat not found"));
             if (!seat.getEventId().equals(eventId)) {
+                businessMetrics.incReservationFailedBadSeat();
                 throw new IllegalArgumentException("Seat does not belong to event");
             }
             if (!"AVAILABLE".equalsIgnoreCase(seat.getStatus())) {
+                businessMetrics.incReservationFailedSeatNotAvailable();
                 throw new IllegalStateException("Seat not available");
             }
             seat.setStatus("HELD");
@@ -74,6 +119,7 @@ public class ReservationService {
                             .expiresAt(expiresAt)
                             .build();
             r = reservationRepository.save(r);
+            businessMetrics.incReservationSucceeded();
 
             TicketReservedEvent evt =
                     new TicketReservedEvent(
@@ -97,10 +143,17 @@ public class ReservationService {
                 reservationEventProducer.publishTicketReserved(evt);
             }
             return r;
+        } catch (IllegalArgumentException e) {
+            // seat not found is also a "bad seat" signal
+            if ("Seat not found".equalsIgnoreCase(e.getMessage())) {
+                businessMetrics.incReservationFailedBadSeat();
+            }
+            throw e;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while locking seat");
         } finally {
+            sample.stop(reserveTimer);
             if (lock.isHeldByCurrentThread()) {
                 lock.unlock();
             }

@@ -15,6 +15,10 @@ public interface SeatRepository extends JpaRepository<Seat, Long> {
 
     long countByStatus(String status);
 
+    long countByEventId(Long eventId);
+
+    long countByEventIdAndStatus(Long eventId, String status);
+
     void deleteByEventId(Long eventId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

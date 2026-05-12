@@ -24,7 +24,6 @@ public class TicketReservedConsumer {
     public void onTicketReserved(String payload) {
         try {
             TicketReservedEvent event = objectMapper.readValue(payload, TicketReservedEvent.class);
-            businessMetrics.incKafkaConsumed(KafkaTopics.TICKET_RESERVED);
             rabbitTemplate.convertAndSend(
                     "",
                     RabbitConfig.NOTIFICATION_QUEUE,
@@ -35,7 +34,6 @@ public class TicketReservedConsumer {
                             event.reservationId(),
                             "userId",
                             event.userId()));
-            businessMetrics.incRabbitPublished(RabbitConfig.NOTIFICATION_QUEUE);
             log.debug("Routed reservation {} to notification queue", event.reservationId());
         } catch (Exception e) {
             log.error("Failed to process ticket-reserved: {}", e.getMessage(), e);

@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class BusinessMetrics {
 
     private final MeterRegistry registry;
+    private final RunScopedMetricsStore runScoped;
 
     private final Counter paymentRequested;
     private final Counter paymentSucceeded;
@@ -20,16 +21,24 @@ public class BusinessMetrics {
     private final Counter paymentSettleSkippedAlreadyTerminal;
     private final Counter paymentWorkerSleepMsTotal;
     private final java.util.concurrent.atomic.AtomicInteger paymentWorkersSleeping;
-    private final java.util.function.Supplier<Double> paymentQueueDepthSupplier;
 
-    private final Map<String, Counter> kafkaProduced = new ConcurrentHashMap<>();
-    private final Map<String, Counter> kafkaConsumed = new ConcurrentHashMap<>();
-    private final Map<String, Counter> rabbitPublished = new ConcurrentHashMap<>();
-    private final Map<String, Counter> rabbitConsumed = new ConcurrentHashMap<>();
-    private final Map<String, Counter> redisOps = new ConcurrentHashMap<>();
+    private final Counter queueEntered;
+    private final Counter admissionIssued;
+    private final Map<String, Counter> rateLimitRejected = new ConcurrentHashMap<>();
+    private final Counter seatLockFailed;
+    private final Counter reservationExpired;
+    private final Counter reservationAttempted;
+    private final Counter reservationSucceeded;
+    private final Counter reservationFailedInvalidAdmission;
+    private final Counter reservationFailedSeatNotAvailable;
+    private final Counter reservationFailedBadSeat;
 
-    public BusinessMetrics(MeterRegistry registry) {
+    private final ClusterBusinessMetricsBridge clusterCounters;
+
+    public BusinessMetrics(MeterRegistry registry, ClusterBusinessMetricsBridge clusterCounters, RunScopedMetricsStore runScoped) {
         this.registry = registry;
+        this.clusterCounters = clusterCounters;
+        this.runScoped = runScoped;
         this.paymentRequested =
                 Counter.builder("ticketing.payment.requested.total")
                         .description("Total count of payment requested events produced")
@@ -60,7 +69,6 @@ public class BusinessMetrics {
                         .description("Total milliseconds slept by payment worker simulation")
                         .register(registry);
         this.paymentWorkersSleeping = new java.util.concurrent.atomic.AtomicInteger(0);
-        this.paymentQueueDepthSupplier = () -> 0.0;
 
         io.micrometer.core.instrument.Gauge.builder(
                         "ticketing.payment.inflight",
@@ -75,35 +83,84 @@ public class BusinessMetrics {
                         java.util.concurrent.atomic.AtomicInteger::get)
                 .description("Current number of payment workers sleeping (simulation dwell)")
                 .register(registry);
+
+        this.queueEntered =
+                Counter.builder("ticketing.queue.entered.total")
+                        .description("Total count of queue enter attempts (joinQueue)")
+                        .register(registry);
+        this.admissionIssued =
+                Counter.builder("ticketing.queue.admission.issued.total")
+                        .description("Total count of admission tokens issued by scheduler")
+                        .register(registry);
+        this.seatLockFailed =
+                Counter.builder("ticketing.reservation.seat_lock.failed.total")
+                        .description("Total count of reservation attempts failed due to seat lock contention")
+                        .register(registry);
+
+        this.reservationExpired =
+                Counter.builder("ticketing.reservation.expired.total")
+                        .description("Total count of reservations expired (TTL rollback)")
+                        .register(registry);
+
+        this.reservationAttempted =
+                Counter.builder("ticketing.reservation.attempted.total")
+                        .description("Total count of reservation attempts (reserve endpoint called)")
+                        .register(registry);
+        this.reservationSucceeded =
+                Counter.builder("ticketing.reservation.succeeded.total")
+                        .description("Total count of reservations created successfully")
+                        .register(registry);
+        this.reservationFailedInvalidAdmission =
+                Counter.builder("ticketing.reservation.failed.invalid_admission.total")
+                        .description("Reservation attempts rejected due to invalid/missing admission token")
+                        .register(registry);
+        this.reservationFailedSeatNotAvailable =
+                Counter.builder("ticketing.reservation.failed.seat_not_available.total")
+                        .description("Reservation attempts rejected because the seat is not AVAILABLE")
+                        .register(registry);
+        this.reservationFailedBadSeat =
+                Counter.builder("ticketing.reservation.failed.bad_seat.total")
+                        .description("Reservation attempts rejected because seat not found or not in event")
+                        .register(registry);
     }
 
     public void incPaymentRequested() {
         paymentRequested.increment();
+        clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_PAYMENT_REQUESTED, 1);
+        runScoped.incPaymentRequested(RunScopedMetricsStore.currentRunIdOrNull());
     }
 
     public void incPaymentSucceeded() {
         paymentSucceeded.increment();
+        clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_PAYMENT_SUCCEEDED, 1);
+        runScoped.incPaymentSucceeded(RunScopedMetricsStore.currentRunIdOrNull());
     }
 
     public void incPaymentFailed() {
         paymentFailed.increment();
+        clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_PAYMENT_FAILED, 1);
+        runScoped.incPaymentFailed(RunScopedMetricsStore.currentRunIdOrNull());
     }
 
     public void incPaymentRequestDroppedMissingReservation() {
         paymentRequestDroppedMissingReservation.increment();
+        clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_PAYMENT_DROPPED, 1);
     }
 
     public void incPaymentRequestSkippedDuplicate() {
         paymentRequestSkippedDuplicate.increment();
+        clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_PAYMENT_SKIPPED_DUPLICATE, 1);
     }
 
     public void incPaymentSettleSkippedAlreadyTerminal() {
         paymentSettleSkippedAlreadyTerminal.increment();
+        clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_PAYMENT_SETTLE_SKIPPED_TERMINAL, 1);
     }
 
     public void addPaymentWorkerSleepMs(long ms) {
         if (ms <= 0) return;
         paymentWorkerSleepMsTotal.increment(ms);
+        clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_PAYMENT_WORKER_SLEEP_MS, ms);
     }
 
     public void incPaymentWorkersSleeping() {
@@ -114,29 +171,59 @@ public class BusinessMetrics {
         paymentWorkersSleeping.decrementAndGet();
     }
 
-    public void incKafkaProduced(String topic) {
-        counter(kafkaProduced, "ticketing.messaging.kafka.produced.total", "topic", safe(topic))
-                .increment();
+    public void incQueueEntered() {
+        queueEntered.increment();
+        clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_QUEUE_ENTERED, 1);
+        runScoped.incQueueEntered(RunScopedMetricsStore.currentRunIdOrNull());
     }
 
-    public void incKafkaConsumed(String topic) {
-        counter(kafkaConsumed, "ticketing.messaging.kafka.consumed.total", "topic", safe(topic))
-                .increment();
+    public void incAdmissionIssued() {
+        admissionIssued.increment();
+        clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_ADMISSION_ISSUED, 1);
+        runScoped.incAdmissionIssued(RunScopedMetricsStore.currentRunIdOrNull());
     }
 
-    public void incRabbitPublished(String queue) {
-        counter(rabbitPublished, "ticketing.messaging.rabbit.published.total", "queue", safe(queue))
-                .increment();
+    public void incSeatLockFailed() {
+        seatLockFailed.increment();
+        clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_SEAT_LOCK_FAILED, 1);
+        runScoped.incSeatLockFailed(RunScopedMetricsStore.currentRunIdOrNull());
     }
 
-    public void incRabbitConsumed(String queue) {
-        counter(rabbitConsumed, "ticketing.messaging.rabbit.consumed.total", "queue", safe(queue))
-                .increment();
+    public void incReservationAttempted() {
+        reservationAttempted.increment();
+        runScoped.incReservationAttempted(RunScopedMetricsStore.currentRunIdOrNull());
     }
 
-    public void incRedisOp(String op) {
-        counter(redisOps, "ticketing.redis.ops.total", "op", safe(op))
-                .increment();
+    public void incReservationSucceeded() {
+        reservationSucceeded.increment();
+        runScoped.incReservationSucceeded(RunScopedMetricsStore.currentRunIdOrNull());
+    }
+
+    public void incReservationFailedInvalidAdmission() {
+        reservationFailedInvalidAdmission.increment();
+        runScoped.incReservationFailedInvalidAdmission(RunScopedMetricsStore.currentRunIdOrNull());
+    }
+
+    public void incReservationFailedSeatNotAvailable() {
+        reservationFailedSeatNotAvailable.increment();
+        runScoped.incReservationFailedSeatNotAvailable(RunScopedMetricsStore.currentRunIdOrNull());
+    }
+
+    public void incReservationFailedBadSeat() {
+        reservationFailedBadSeat.increment();
+        runScoped.incReservationFailedBadSeat(RunScopedMetricsStore.currentRunIdOrNull());
+    }
+
+    public void incReservationExpired() {
+        reservationExpired.increment();
+        clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_RESERVATION_EXPIRED, 1);
+        runScoped.incReservationExpired(RunScopedMetricsStore.currentRunIdOrNull());
+    }
+
+    public void incRateLimitRejected(String scope) {
+        counter(rateLimitRejected, "ticketing.ratelimit.rejected.total", "scope", safe(scope)).increment();
+        clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_RATELIMIT_REJECTED, 1);
+        runScoped.incRateLimitRejected(RunScopedMetricsStore.currentRunIdOrNull());
     }
 
     private Counter counter(Map<String, Counter> cache, String name, String tagKey, String tagValue) {
@@ -145,7 +232,7 @@ public class BusinessMetrics {
                 key,
                 ignored ->
                         Counter.builder(name)
-                                .description("Business-level message/operation counters")
+                                .description("Business-level counters")
                                 .tag(tagKey, tagValue)
                                 .register(registry));
     }

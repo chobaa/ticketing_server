@@ -23,7 +23,6 @@ public class PaymentResultConsumer {
     public void onPaymentSucceeded(String payload) {
         try {
             PaymentSucceededEvent event = objectMapper.readValue(payload, PaymentSucceededEvent.class);
-            businessMetrics.incKafkaConsumed(KafkaTopics.PAYMENT_SUCCEEDED);
             reservationSettlementService.settleSuccess(event.reservationId());
             log.info("Payment settled success reservationId={}", event.reservationId());
         } catch (Exception e) {
@@ -35,7 +34,6 @@ public class PaymentResultConsumer {
     public void onPaymentFailed(String payload) {
         try {
             PaymentFailedEvent event = objectMapper.readValue(payload, PaymentFailedEvent.class);
-            businessMetrics.incKafkaConsumed(KafkaTopics.PAYMENT_FAILED);
             String reason = event.failureCode() + ":" + event.failureMessage();
             reservationSettlementService.settleFailure(event.reservationId(), reason, true);
             log.info("Payment settled failure reservationId={}", event.reservationId());

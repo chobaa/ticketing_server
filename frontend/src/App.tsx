@@ -10,7 +10,7 @@ import {
   type SeatDto,
 } from './api'
 import { LiquidGlassPanel } from './components/LiquidGlassPanel'
-import { DeveloperDashboard, UserDashboard } from './components/TrafficAnalyticsDashboard'
+import { OpsDashboard } from './components/OpsDashboard'
 
 function AuthCard({ onAuthed }: { onAuthed: () => void }) {
   const [email, setEmail] = useState('demo@ticketing.local')
@@ -96,16 +96,29 @@ function EventList() {
     grade: 'R',
   })
 
-  function load() {
-    setErr(null)
-    api
-      .events(showLoadTestEvents)
-      .then(setEvents)
-      .catch((e) => setErr(String(e)))
+  async function refreshEvents() {
+    try {
+      const xs = await api.events(showLoadTestEvents)
+      setEvents(xs)
+      setErr(null)
+    } catch (e) {
+      setErr(String(e))
+    }
   }
 
   useEffect(() => {
-    load()
+    let cancelled = false
+    api
+      .events(showLoadTestEvents)
+      .then((xs) => {
+        if (!cancelled) setEvents(xs)
+      })
+      .catch((e) => {
+        if (!cancelled) setErr(String(e))
+      })
+    return () => {
+      cancelled = true
+    }
   }, [showLoadTestEvents])
 
   useEffect(() => {
@@ -136,7 +149,7 @@ function EventList() {
         seatPrice: 99000,
         grade: 'R',
       })
-      load()
+      await refreshEvents()
     } catch (x) {
       setAddErr(x instanceof Error ? x.message : '추가 실패')
     }
@@ -282,7 +295,7 @@ function EventList() {
                   if (!ok) return
                   try {
                     await api.deleteEvent(e.id)
-                    load()
+                    await refreshEvents()
                   } catch (x) {
                     setErr(x instanceof Error ? x.message : '삭제 실패')
                   }
@@ -641,8 +654,8 @@ function Layout({
             Events
           </Link>
           {authed && (
-            <Link className="text-[#007AFF]" to="/dashboard">
-              Dashboard
+            <Link className="text-[#007AFF]" to="/ops">
+              Ops
             </Link>
           )}
           {authed && (
@@ -694,11 +707,15 @@ export default function App() {
           />
           <Route
             path="/dashboard"
-            element={authed ? <UserDashboard /> : <Navigate to="/" replace />}
+            element={authed ? <Navigate to="/ops" replace /> : <Navigate to="/" replace />}
           />
           <Route
             path="/dashboard/dev"
-            element={authed ? <DeveloperDashboard /> : <Navigate to="/" replace />}
+            element={authed ? <Navigate to="/ops" replace /> : <Navigate to="/" replace />}
+          />
+          <Route
+            path="/ops"
+            element={authed ? <OpsDashboard /> : <Navigate to="/" replace />}
           />
         </Routes>
       </Layout>

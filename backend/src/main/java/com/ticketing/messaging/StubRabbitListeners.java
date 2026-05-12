@@ -17,7 +17,6 @@ public class StubRabbitListeners {
 
     @RabbitListener(queues = RabbitConfig.NOTIFICATION_QUEUE)
     public void onNotificationStub(Map<String, Object> payload) {
-        businessMetrics.incRabbitConsumed(RabbitConfig.NOTIFICATION_QUEUE);
         log.info("[NOTIFICATION STUB] {}", payload);
     }
 }

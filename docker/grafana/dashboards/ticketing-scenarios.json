@@ -1,0 +1,245 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "liveNow": false,
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["ticketing", "scenario"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "티켓팅 시나리오 (A~F) 분석",
+  "uid": "ticketing-scenarios",
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Scenario A: Queue / Admission / Seat lock failed (req/s)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 7 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ticketing_queue_entered_total[1m]))",
+          "legendFormat": "queue_entered/s"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(ticketing_queue_admission_issued_total[1m]))",
+          "legendFormat": "admission_issued/s"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(ticketing_reservation_seat_lock_failed_total[1m]))",
+          "legendFormat": "seat_lock_failed/s"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Scenario B: Lock fail / queue / admission (req/s) + lock acquire p99",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 7 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ticketing_reservation_seat_lock_failed_total[1m]))",
+          "legendFormat": "lock_failed/s"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(ticketing_queue_entered_total[1m]))",
+          "legendFormat": "queue_entered/s"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(ticketing_queue_admission_issued_total[1m]))",
+          "legendFormat": "admission_issued/s"
+        },
+        {
+          "refId": "D",
+          "expr": "histogram_quantile(0.99, sum(rate(ticketing_reservation_seat_lock_acquire_seconds_bucket[5m])) by (le)) * 1000",
+          "legendFormat": "lock_acquire_p99_ms"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [
+        { "matcher": { "id": "byName", "options": "lock_acquire_p99_ms" }, "properties": [{ "id": "unit", "value": "ms" }] }
+      ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Scenario C: 429 by scope + 429 total + HTTP req/s + HTTP p99",
+      "gridPos": { "x": 0, "y": 7, "w": 12, "h": 7 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (scope) (rate(ticketing_ratelimit_rejected_total[1m]))",
+          "legendFormat": "429/s ({{scope}})"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(ticketing_ratelimit_rejected_total[1m]))",
+          "legendFormat": "429/s (total)"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(http_server_requests_seconds_count[1m]))",
+          "legendFormat": "http_requests/s (all)"
+        },
+        {
+          "refId": "D",
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket[5m])) by (le)) * 1000",
+          "legendFormat": "http_p99_ms"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [
+        { "matcher": { "id": "byName", "options": "http_p99_ms" }, "properties": [{ "id": "unit", "value": "ms" }] }
+      ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Scenario D: Expired & payment req (rates) + pending/processing/inflight",
+      "gridPos": { "x": 12, "y": 7, "w": 12, "h": 7 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ticketing_reservation_expired_total[1m]))",
+          "legendFormat": "reservation_expired/s"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(ticketing_payment_requested_total[1m]))",
+          "legendFormat": "payment_requested/s"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(ticketing_integrity_reservations_pending_payment)",
+          "legendFormat": "reservations_pending (gauge)"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(ticketing_integrity_payments_processing)",
+          "legendFormat": "payments_processing (gauge)"
+        },
+        {
+          "refId": "E",
+          "expr": "sum(ticketing_payment_inflight)",
+          "legendFormat": "payment_inflight (gauge)"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [
+        { "matcher": { "id": "byName", "options": "reservation_expired/s" }, "properties": [{ "id": "unit", "value": "ops" }] },
+        { "matcher": { "id": "byName", "options": "payment_requested/s" }, "properties": [{ "id": "unit", "value": "ops" }] }
+      ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Integrity mismatch (sum, 0=OK)",
+      "gridPos": { "x": 0, "y": 14, "w": 6, "h": 3 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(ticketing_integrity_mismatch_held_vs_pending) + sum(ticketing_integrity_mismatch_sold_vs_confirmed) + sum(ticketing_integrity_mismatch_confirmed_vs_payment_success) + sum(ticketing_integrity_mismatch_pending_vs_payment_processing)"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Payment pipeline rates (req/s)",
+      "gridPos": { "x": 6, "y": 14, "w": 18, "h": 7 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ticketing_payment_requested_total[1m]))",
+          "legendFormat": "requested/s"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(ticketing_payment_succeeded_total[1m]))",
+          "legendFormat": "succeeded/s"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(ticketing_payment_failed_total[1m]))",
+          "legendFormat": "failed/s"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Scenario E: SOLD/HELD seats + PENDING_PAYMENT + queue entered/s (전역 합계)",
+      "gridPos": { "x": 0, "y": 21, "w": 24, "h": 7 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(ticketing_integrity_seats_sold)",
+          "legendFormat": "seats_sold (gauge)"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(ticketing_integrity_seats_held)",
+          "legendFormat": "seats_held (gauge)"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(ticketing_integrity_reservations_pending_payment)",
+          "legendFormat": "reservations_pending (gauge)"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(ticketing_queue_entered_total[1m]))",
+          "legendFormat": "queue_entered/s"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [
+        { "matcher": { "id": "byName", "options": "queue_entered/s" }, "properties": [{ "id": "unit", "value": "ops" }] }
+      ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Scenario F: Seat lock fail + HTTP req/s + rate limit 429/s (Ops 3지표와 동일)",
+      "gridPos": { "x": 0, "y": 28, "w": 24, "h": 7 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ticketing_reservation_seat_lock_failed_total[1m]))",
+          "legendFormat": "seat_lock_failed/s"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(http_server_requests_seconds_count[1m]))",
+          "legendFormat": "http_requests/s (all)"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(ticketing_ratelimit_rejected_total[1m]))",
+          "legendFormat": "ratelimit_429/s (total)"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    }
+  ]
+}
+

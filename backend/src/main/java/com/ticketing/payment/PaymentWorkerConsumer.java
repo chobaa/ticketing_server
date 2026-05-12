@@ -21,7 +21,6 @@ public class PaymentWorkerConsumer {
             concurrency = "${ticketing.payment.worker.concurrency:8}")
     public void onPaymentRequest(PaymentRequestedEvent event) {
         paymentSimulationService.simulate(event);
-        businessMetrics.incRabbitConsumed(RabbitConfig.PAYMENT_QUEUE);
         log.debug("Payment worker processed reservationId={}", event.reservationId());
     }
 }

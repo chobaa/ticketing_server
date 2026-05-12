@@ -24,9 +24,7 @@ public class PaymentRequestedQueueBridgeConsumer {
     public void onPaymentRequested(String payload) {
         try {
             PaymentRequestedEvent event = objectMapper.readValue(payload, PaymentRequestedEvent.class);
-            businessMetrics.incKafkaConsumed(KafkaTopics.PAYMENT_REQUESTED);
             rabbitTemplate.convertAndSend("", RabbitConfig.PAYMENT_QUEUE, event);
-            businessMetrics.incRabbitPublished(RabbitConfig.PAYMENT_QUEUE);
             // "requested" should reflect what actually gets issued to the worker queue.
             businessMetrics.incPaymentRequested();
             log.info("Payment request enqueued reservationId={}", event.reservationId());

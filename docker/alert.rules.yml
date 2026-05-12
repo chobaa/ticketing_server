@@ -1,0 +1,70 @@
+groups:
+  - name: ticketing_slo
+    rules:
+      - alert: TicketingHighP99Latency
+        expr: histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job="ticketing"}[5m])) by (le)) > 1.0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p99 latency"
+          description: "p99 latency > 1s for 2m."
+
+      - alert: TicketingHigh5xxRate
+        expr: sum(rate(http_server_requests_seconds_count{job="ticketing",status=~"5.."}[1m])) > 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High 5xx rate"
+          description: "5xx responses > 1/s for 1m."
+
+      - alert: TicketingHikariPendingConnections
+        expr: sum(hikaricp_connections_pending{job="ticketing"}) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Hikari pending connections"
+          description: "DB pool starvation suspected: pending > 0 for 1m."
+
+      - alert: TicketingTomcatThreadsSaturated
+        expr: (sum(tomcat_threads_current{job="ticketing"}) / sum(tomcat_threads_config_max{job="ticketing"})) > 0.9
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tomcat threads near max"
+          description: "Tomcat current/max > 0.9 for 2m."
+
+  - name: ticketing_pipeline
+    rules:
+      - alert: TicketingKafkaLagHigh
+        expr: sum(kafka_consumergroup_lag) > 1000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka consumer lag high"
+          description: "Total consumer lag > 1000 for 2m."
+
+      - alert: TicketingRabbitQueueGrowing
+        expr: sum(rabbitmq_queue_messages{queue="payment.queue"}) > 1000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rabbit payment queue depth high"
+          description: "payment.queue depth > 1000 for 2m."
+
+  - name: ticketing_integrity
+    rules:
+      - alert: TicketingIntegrityMismatch
+        expr: (sum(ticketing_integrity_mismatch_held_vs_pending) + sum(ticketing_integrity_mismatch_sold_vs_confirmed) + sum(ticketing_integrity_mismatch_confirmed_vs_payment_success) + sum(ticketing_integrity_mismatch_pending_vs_payment_processing)) > 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Integrity mismatch detected"
+          description: "One or more integrity mismatch gauges are non-zero."
+

@@ -61,6 +61,11 @@ management:
         "[http.server.requests]": 0.5, 0.95, 0.99
 
 ticketing:
+  metrics:
+    cluster-counters:
+      # When true, selected business counters are mirrored to Redis and /api/dashboard/business-metrics
+      # reads cluster-wide totals (useful behind a load balancer with multiple backend replicas).
+      enabled: ${TICKETING_METRICS_CLUSTER_COUNTERS_ENABLED:false}
   jwt:
     secret: ${JWT_SECRET:change-me-in-production-use-long-random-string-at-least-256-bits}
     expiration-ms: 86400000
@@ -89,3 +94,7 @@ ticketing:
     token-ttl-seconds: 600
   reservation:
     hold-ttl-minutes: 10
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [runId=%X{runId:-} reqId=%X{reqId:-}] %logger{36} - %msg%n"

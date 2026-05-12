@@ -19,10 +19,13 @@ import java.time.Duration;
 public class RateLimitFilter extends OncePerRequestFilter {
     private final RateLimitProperties props;
     private final RateLimitService service;
+    private final com.ticketing.metrics.BusinessMetrics businessMetrics;
 
-    public RateLimitFilter(RateLimitProperties props, RateLimitService service) {
+    public RateLimitFilter(
+            RateLimitProperties props, RateLimitService service, com.ticketing.metrics.BusinessMetrics businessMetrics) {
         this.props = props;
         this.service = service;
+        this.businessMetrics = businessMetrics;
     }
 
     @Override
@@ -51,6 +54,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
                     props.ip().windowMs(),
                     props.ip().requests());
             if (!ipRes.allowed()) {
+                businessMetrics.incRateLimitRejected("ip");
                 reject(response, ipRes.retryAfterMs());
                 return;
             }
@@ -64,6 +68,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
                     props.user().windowMs(),
                     props.user().requests());
             if (!userRes.allowed()) {
+                businessMetrics.incRateLimitRejected("user");
                 reject(response, userRes.retryAfterMs());
                 return;
             }

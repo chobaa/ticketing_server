@@ -20,6 +20,7 @@ public class AdmissionScheduler {
     private final RedissonClient redissonClient;
     private final EventRepository eventRepository;
     private final QueueService queueService;
+    private final com.ticketing.metrics.BusinessMetrics businessMetrics;
 
     @Value("${ticketing.queue.admission-batch-size}")
     private int batchSize;
@@ -49,6 +50,7 @@ public class AdmissionScheduler {
                 }
                 queueService.removeFromQueue(eventId, userId);
                 String token = queueService.issueAdmissionToken(eventId, userId);
+                businessMetrics.incAdmissionIssued();
                 log.debug("Admitted user {} to event {} token={}", userId, eventId, token);
             } catch (Exception e) {
                 log.warn("Admission failed for {}: {}", userIdStr, e.getMessage());

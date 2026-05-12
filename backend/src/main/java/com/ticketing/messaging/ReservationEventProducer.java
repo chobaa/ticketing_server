@@ -25,7 +25,6 @@ public class ReservationEventProducer {
         try {
             String json = objectMapper.writeValueAsString(event);
             kafkaTemplate.send(KafkaTopics.TICKET_RESERVED, String.valueOf(event.reservationId()), json);
-            businessMetrics.incKafkaProduced(KafkaTopics.TICKET_RESERVED);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException(e);
         }
@@ -35,7 +34,6 @@ public class ReservationEventProducer {
         try {
             String json = objectMapper.writeValueAsString(event);
             kafkaTemplate.send(KafkaTopics.QUEUE_ENTER, String.valueOf(event.eventId()), json);
-            businessMetrics.incKafkaProduced(KafkaTopics.QUEUE_ENTER);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException(e);
         }
@@ -45,7 +43,6 @@ public class ReservationEventProducer {
         try {
             String json = objectMapper.writeValueAsString(event);
             kafkaTemplate.send(KafkaTopics.PAYMENT_REQUESTED, String.valueOf(event.reservationId()), json);
-            businessMetrics.incKafkaProduced(KafkaTopics.PAYMENT_REQUESTED);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException(e);
         }
@@ -55,7 +52,6 @@ public class ReservationEventProducer {
         try {
             String json = objectMapper.writeValueAsString(event);
             kafkaTemplate.send(KafkaTopics.PAYMENT_SUCCEEDED, String.valueOf(event.reservationId()), json);
-            businessMetrics.incKafkaProduced(KafkaTopics.PAYMENT_SUCCEEDED);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException(e);
         }
@@ -65,7 +61,6 @@ public class ReservationEventProducer {
         try {
             String json = objectMapper.writeValueAsString(event);
             kafkaTemplate.send(KafkaTopics.PAYMENT_FAILED, String.valueOf(event.reservationId()), json);
-            businessMetrics.incKafkaProduced(KafkaTopics.PAYMENT_FAILED);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException(e);
         }
@@ -75,7 +70,6 @@ public class ReservationEventProducer {
         try {
             String json = objectMapper.writeValueAsString(event);
             kafkaTemplate.send(KafkaTopics.TICKET_CANCELED, String.valueOf(event.reservationId()), json);
-            businessMetrics.incKafkaProduced(KafkaTopics.TICKET_CANCELED);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException(e);
         }

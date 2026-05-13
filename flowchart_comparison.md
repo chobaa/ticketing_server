@@ -30,6 +30,52 @@ flowchart TB
   RMQ2 --> NS[Notification Service\nEmail/SMS/Push]
 ```
 
+### (텍스트 그림) 전체 트래픽/요청 흐름 (Before, ASCII)
+
+> Mermaid를 그대로 노출하지 않고 문서에서 바로 볼 수 있도록 ASCII로 함께 제공합니다.
+
+```
+┌────────────────────────────── 구현 전 (기획) ──────────────────────────────┐
+│ [Client: Web/Mobile]                                                     │
+│          │                                                               │
+│          v                                                               │
+│ [Load Balancer (Nginx)]                                                  │
+│          │                                                               │
+│          v                                                               │
+│ [API Gateway (Spring Cloud Gateway)]                                     │
+│  - Routing / Auth filter / Rate limiting                                 │
+│      │              │                         │                          │
+│      v              v                         v                          │
+│ [User Service]   [Event Service]        [Ticket Service]                 │
+│  JWT 인증         공연/좌석+캐싱          대기열/토큰/예매(락/재고)         │
+│                                        │            ^                    │
+│                                        │            │                    │
+│                                        v            │                    │
+│                              [Redis Cluster] <──────┘                    │
+│                               Queue(ZSET), Token cache,                  │
+│                               Stock(DECR), Dist Lock                     │
+│                                        │                                 │
+│                                        v                                 │
+│                                     [Kafka]                              │
+│                           ticket-reserved/canceled/...                    │
+│                                        │                                 │
+│                                        v                                 │
+│                               [Payment Service]                          │
+│                                  결제 처리                               │
+│                             ┌─────────┴─────────┐                        │
+│                             v                   v                        │
+│                   [RabbitMQ payment.queue]     [MySQL]                   │
+│                       (작업 적재/소비)         최종 예약/결제 저장         │
+│                             │                                            │
+│                             v                                            │
+│                 [RabbitMQ notification.queue]                             │
+│                             │                                            │
+│                             v                                            │
+│                   [Notification Service]                                  │
+│                    Email / SMS / Push                                     │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
 ### 대기열 처리 흐름 (Queue Flow)
 
 ```mermaid
@@ -110,6 +156,35 @@ flowchart TB
   P[Prometheus] --> B
 ```
 
+### (텍스트 그림) 전체 트래픽/요청 흐름 (After, ASCII)
+
+```
+┌────────────────────────────── 구현 후 (현재 레포) ─────────────────────────────┐
+│ [Client: Browser]                                                          │
+│          │                                                                  │
+│          v                                                                  │
+│ [Nginx (frontend container)]                                                │
+│  - static / /api proxy / /ws proxy                                          │
+│          │                                                                  │
+│          v                                                                  │
+│ [Spring Boot Backend (monolith)]                                            │
+│  - JWT auth filter                                                          │
+│  - RateLimitFilter (Redis sliding window)                                   │
+│  - Queue/Admission + Reservation/Lock/Stock                                  │
+│  - Kafka + RabbitMQ consumers                                                │
+│    │        │        │         │                                             │
+│    │        │        │         │                                             │
+│    v        v        v         v                                             │
+│ [Redis]    [MySQL]  [Kafka]   [RabbitMQ]                                     │
+│ (single)                                                                     │
+│  - Queue(ZSET)                                                               │
+│  - Admission token TTL                                                       │
+│  - Rate limit keys                                                           │
+│                                                                              │
+│ [Prometheus] ───────────────────────────────────────────────► (Backend)      │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
 ### Rate Limiting 흐름 (현재: 백엔드 필터에서 IP/User 단위 제한)
 
 ```mermaid
@@ -136,6 +211,33 @@ sequenceDiagram
   end
 ```
 
+### (텍스트 그림) Rate Limiting 흐름 (After, ASCII)
+
+```
+[Client] -> [Nginx(front)] -> [Backend]
+                             |
+                             | (1) JWT 파싱(있으면 userId 확보)
+                             v
+                           [Redis]
+                             |
+                             | Lua: rl:ip:{ip} (sliding window)
+                             v
+                 +---------------------------+
+                 | IP 제한 초과?             |
+                 +---------------------------+
+                   | Yes                | No
+                   v                    v
+     [429 + Retry-After 응답]     Lua: rl:user:{userId} (인증된 경우)
+                                      |
+                                      v
+                          +---------------------------+
+                          | User 제한 초과?           |
+                          +---------------------------+
+                            | Yes                | No
+                            v                    v
+              [429 + Retry-After 응답]      [다음 핸들러로 진행]
+```
+
 ### nGrinder 부하테스트 실행 흐름 (현재 레포 기반)
 
 ```mermaid
@@ -146,6 +248,41 @@ flowchart LR
   B --> DB[(MySQL)]
   B --> K[Kafka]
   B --> RMQ[RabbitMQ]
+```
+
+### (텍스트 그림) nGrinder 부하테스트 실행 흐름 (After, ASCII)
+
+```
+[nGrinder Controller (localhost:19080)]
+                |
+                v
+[nGrinder Agent (script runner)]
+                |
+                | baseUrl=http://host.docker.internal:8080
+                v
+[Backend API] ---> [Redis]
+     |            [MySQL]
+     |            [Kafka]
+     └----------> [RabbitMQ]
+```
+
+---
+
+## 이미지(PNG) 버전 (요청: C)
+
+현재 이 채팅에서 선택된 모델은 **이미지 생성 기능이 비활성화**되어 있어, 문서에 바로 PNG를 생성/첨부할 수 없습니다.
+
+- PNG를 생성해 `flowchart_comparison.md`에 붙이려면, **이미지 생성 가능한 모델로 전환** 후 제가 아래 파일들을 만들어서 링크/첨부까지 마무리할게요.
+  - `docs/flowchart_before.png` (구현 전 전체 흐름)
+  - `docs/flowchart_after.png` (구현 후 전체 흐름)
+  - `docs/flowchart_rate_limit_after.png` (Rate limit 흐름)
+
+PNG가 준비되면, 이 문서의 해당 섹션에 아래처럼 삽입될 예정입니다.
+
+```md
+![구현 전 전체 흐름](docs/flowchart_before.png)
+![구현 후 전체 흐름](docs/flowchart_after.png)
+![Rate limiting 흐름](docs/flowchart_rate_limit_after.png)
 ```
 
 ---

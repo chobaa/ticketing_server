@@ -507,6 +507,7 @@ function stripStatusMessage(html: string): string {
 }
 
 function NgrinderLoadTestPanel() {
+  const STORAGE_KEY = 'ngrinder:lastTestContext:v1'
   const [requestedTarget, setRequestedTarget] = useState<number>(200)
   const [actionBusy, setActionBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -532,6 +533,124 @@ function NgrinderLoadTestPanel() {
   const [baselineRequested, setBaselineRequested] = useState<number | null>(null)
   const [baselineSucceeded, setBaselineSucceeded] = useState<number | null>(null)
   const [baselineFailed, setBaselineFailed] = useState<number | null>(null)
+
+  const persistContext = (ctx: {
+    testId: number | null
+    baselineRequested: number | null
+    baselineSucceeded: number | null
+    baselineFailed: number | null
+    updatedAt: string
+  }) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(ctx))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const readContext = (): {
+    testId: number | null
+    baselineRequested: number | null
+    baselineSucceeded: number | null
+    baselineFailed: number | null
+  } | null => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (!raw) return null
+      const x = JSON.parse(raw) as {
+        testId?: unknown
+        baselineRequested?: unknown
+        baselineSucceeded?: unknown
+        baselineFailed?: unknown
+      }
+      const id = typeof x.testId === 'number' && Number.isFinite(x.testId) ? x.testId : null
+      const br =
+        typeof x.baselineRequested === 'number' && Number.isFinite(x.baselineRequested)
+          ? x.baselineRequested
+          : null
+      const bs =
+        typeof x.baselineSucceeded === 'number' && Number.isFinite(x.baselineSucceeded)
+          ? x.baselineSucceeded
+          : null
+      const bf =
+        typeof x.baselineFailed === 'number' && Number.isFinite(x.baselineFailed)
+          ? x.baselineFailed
+          : null
+      if (!id) return null
+      return { testId: id, baselineRequested: br, baselineSucceeded: bs, baselineFailed: bf }
+    } catch {
+      return null
+    }
+  }
+
+  // Auto-reconnect to the most recent in-progress test after refresh.
+  useEffect(() => {
+    let cancelled = false
+
+    const attach = async (id: number) => {
+      setTestId(id)
+      setErr(null)
+      setStatus(null)
+      setPerf(null)
+      setBizSeries([])
+      setLogsCollected(false)
+      setLogsCollecting(false)
+      await refresh(id)
+    }
+
+    ;(async () => {
+      if (testId != null) return
+
+      const saved = readContext()
+      if (saved?.testId) {
+        setBaselineRequested(saved.baselineRequested)
+        setBaselineSucceeded(saved.baselineSucceeded)
+        setBaselineFailed(saved.baselineFailed)
+        try {
+          await attach(saved.testId)
+          if (!cancelled) return
+        } catch {
+          // ignore and fall through to "find latest running"
+        }
+      }
+
+      // If no saved context (or it failed), auto-pick latest TESTING from controller.
+      try {
+        const box = await api.ngrinderTests(0, 50)
+        const tests = Array.isArray(box?.tests) ? box.tests : []
+        const testing = tests
+          .filter((t) => t?.status?.name === 'TESTING' && typeof t.id === 'number' && Number.isFinite(t.id))
+          .sort((a, b) => (b.id as number) - (a.id as number))
+        const latestTesting = testing[0]
+
+        const latestAny = tests
+          .filter((t) => typeof t.id === 'number' && Number.isFinite(t.id))
+          .sort((a, b) => (b.id as number) - (a.id as number))[0]
+
+        // Prefer a currently-running test; if none, attach to the most recent test so users still see results after refresh.
+        const pick = latestTesting ?? latestAny
+
+        if (pick?.id && !cancelled) {
+          // Baselines unknown for this attach; deltas will show as '—' until next manual start.
+          persistContext({
+            testId: pick.id,
+            baselineRequested: null,
+            baselineSucceeded: null,
+            baselineFailed: null,
+            updatedAt: new Date().toISOString(),
+          })
+          await attach(pick.id)
+        }
+      } catch {
+        // ignore: user can still start manually
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const prevRequestedDeltaRef = useRef<number | null>(null)
   const flatRequestedDeltaTicksRef = useRef(0)
@@ -622,6 +741,18 @@ function NgrinderLoadTestPanel() {
       const created = await api.ngrinderStartPaymentRequestedCount(Math.max(1, Math.floor(requestedTarget)))
       const id = typeof created?.id === 'number' ? created.id : null
       setTestId(id)
+      if (id) {
+        persistContext({
+          testId: id,
+          baselineRequested:
+            typeof baseReq === 'number' && Number.isFinite(baseReq) ? baseReq : null,
+          baselineSucceeded:
+            typeof baseSucc === 'number' && Number.isFinite(baseSucc) ? baseSucc : null,
+          baselineFailed:
+            typeof baseFail === 'number' && Number.isFinite(baseFail) ? baseFail : null,
+          updatedAt: new Date().toISOString(),
+        })
+      }
       setStatus(null)
       setPerf(null)
       setBizSeries([])
@@ -674,6 +805,18 @@ function NgrinderLoadTestPanel() {
       cancelled = true
     }
   }, [testId, finished, logsCollected, logsCollecting])
+
+  // Persist testId/baselines so refresh can re-attach to the latest test.
+  useEffect(() => {
+    if (!testId) return
+    persistContext({
+      testId,
+      baselineRequested,
+      baselineSucceeded,
+      baselineFailed,
+      updatedAt: new Date().toISOString(),
+    })
+  }, [testId, baselineRequested, baselineSucceeded, baselineFailed])
 
   const issued = Math.max(1, Math.floor(requestedTarget))
   const success = statusCounts.success

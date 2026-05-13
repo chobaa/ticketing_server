@@ -134,6 +134,10 @@ export const api = {
     ),
   ngrinderLogs: (id: number) => req<NgrinderLogsResponse>(`/api/dashboard/ngrinder/tests/${id}/logs`),
   ngrinderStop: (id: number) => reqEmpty(`/api/dashboard/ngrinder/tests/${id}/stop`, { method: 'POST' }),
+  ngrinderTests: (page = 0, size = 20) =>
+    req<{ tests: NgrinderTestSummary[]; number?: number; size?: number; hasNext?: boolean }>(
+      `/api/dashboard/ngrinder/tests?page=${encodeURIComponent(String(page))}&size=${encodeURIComponent(String(size))}`,
+    ),
   /** Start a test that runs until payment-requested delta reaches requestedCount, then stops. */
   ngrinderStartPaymentRequestedCount: (requestedCount: number) =>
     req<NgrinderPerfTestEntity>(
@@ -217,6 +221,14 @@ export interface NgrinderPerfTestEntity {
   id?: number
   testName?: string
   status?: { name?: NgrinderTestStatusName }
+}
+
+export interface NgrinderTestSummary {
+  id: number
+  testName?: string
+  status?: { name?: NgrinderTestStatusName }
+  // nGrinder returns timestamps in different fields depending on version; keep as unknown.
+  [k: string]: unknown
 }
 
 export interface NgrinderStatusResponse {

@@ -1,169 +1,362 @@
-# 고성능 티켓팅 플랫폼
+# 🎫 고성능 티켓팅 플랫폼 (High-Performance Ticketing Platform)
 
-대기열·예매·비동기 결제 파이프라인을 포함한 티켓팅 백엔드와 대시보드, 부하·관측 스택을 한 저장소에서 돌릴 수 있는 프로젝트입니다.
+> **대기열 유입부터 대량의 좌석 경합, 비동기 결제 파이프라인**까지의 모든 퍼널을 단일 저장소에서 구현하고, nGrinder 부하 테스트 및 Observability 도구(Prometheus/Grafana)로 정밀 검증하는 엔드투엔드 인프라 프로젝트입니다.
 
-## 기술 스택
+기획 단계의 마이크로서비스·Gateway 설계와 현재 구현의 차이는 [flowchart_comparison.md](./flowchart_comparison.md)를 참고하세요.
 
-| 영역 | 구성 |
+<div align="center">
+
+  <img src="https://img.shields.io/badge/Spring%20Boot-3.3-6DB33F?style=for-the-badge&logo=Spring%20Boot&logoColor=white" alt="Spring Boot 3.3"/>
+  <img src="https://img.shields.io/badge/Java-21-ED8B00?style=for-the-badge&logo=OpenJDK&logoColor=white" alt="Java 21"/>
+  <img src="https://img.shields.io/badge/Redis%20Cluster-7.0-DC382D?style=for-the-badge&logo=Redis&logoColor=white" alt="Redis Cluster"/>
+  <img src="https://img.shields.io/badge/Apache%20Kafka-3.x-231F20?style=for-the-badge&logo=Apache%20Kafka&logoColor=white" alt="Kafka"/>
+  <img src="https://img.shields.io/badge/RabbitMQ-3.x-FF6600?style=for-the-badge&logo=RabbitMQ&logoColor=white" alt="RabbitMQ"/>
+  <img src="https://img.shields.io/badge/MySQL-8.4-4479A1?style=for-the-badge&logo=MySQL&logoColor=white" alt="MySQL 8.4"/>
+
+</div>
+
+## 목차
+
+1. [프로젝트 데모 및 대시보드 시각화](#-1-프로젝트-데모-및-대시보드-시각화)
+2. [핵심 아키텍처 및 기술 스택](#️-2-핵심-아키텍처-및-기술-스택)
+3. [백엔드 및 프론트엔드 특징](#️-3-백엔드-및-프론트엔드-특징)
+4. [부하 테스트 시나리오 (A~F) 및 검증 지표](#-4-부하-테스트-시나리오-a--f-및-검증-지표)
+5. [요청 처리 흐름 (정상 예매)](#-5-요청-처리-흐름-정상-예매-오케스트레이션)
+6. [문제 해결 가이드 (Troubleshooting)](#️-6-문제-해결-가이드-troubleshooting)
+7. [빠른 시작 (Quick Start)](#-7-빠른-시작-quick-start)
+8. [관측성 아키텍처 및 문서](#-8-관측성-아키텍처-및-문서)
+
+---
+
+## 🎬 1. 프로젝트 데모 및 대시보드 시각화
+
+### 🎥 데모 영상
+
+<video src="assets/Ticketing_Test_Demo.mp4" controls width="100%" style="max-width:960px;border-radius:12px;background:#111;">
+  브라우저가 video 태그를 지원하지 않습니다.
+  <a href="https://drive.google.com/file/d/1L4A3smulnoks5xPSnGqh1EE2ObVDNoOs/view?usp=drive_link">Google Drive</a>에서 재생하거나
+  <a href="assets/Ticketing_Test_Demo.mp4">Ticketing_Test_Demo.mp4</a>를 내려받으세요.
+</video>
+
+<div align="center">
+
+[![Google Drive 미러](https://img.shields.io/badge/▶_미러-Google_Drive-4285F4?style=for-the-badge&logo=google-drive&logoColor=white)](https://drive.google.com/file/d/1L4A3smulnoks5xPSnGqh1EE2ObVDNoOs/view?usp=drive_link)
+
+</div>
+
+<sub>권장 시청 순서: 사용자 예매 → Ops 시나리오 F 실행 → Grafana <code>runId</code> 퍼널 · 저장소 영상은 Git LFS (<code>assets/Ticketing_Test_Demo.mp4</code>, [미디어 가이드](./docs/assets/README.md))</sub>
+
+### 👤 사용자 예매 플로우 (`/`)
+
+| 입장·좌석 선택 | 결제 완료 |
+|:---:|:---:|
+| <img src="assets/예매%20화면.png" width="100%" alt="입장 토큰 확보 후 좌석표"/> | <img src="assets/결제%20완료.png" width="100%" alt="결제 성공 및 예매 확정"/> |
+
+<sub>대기열 → 입장 토큰 → 좌석 <code>HELD</code> → Kafka/Rabbit 비동기 결제 → <code>SOLD</code></sub>
+
+### 🖥️ Ops 부하 테스트 (`/ops`)
+
+<img src="assets/ops%20대시보드.png" width="100%" alt="Ops — nGrinder 시나리오 A~F, KPI, 좌석 히트맵"/>
+
+<img src="assets/F%20테스트%20진행중.png" width="100%" alt="Scenario F 실행 중 — runId, 퍼널 KPI, 좌석 히트맵"/>
+
+<sub>시나리오 A~F 실행 · runId · 결제 파이프라인 · 시나리오별 KPI · 좌석 히트맵(AVAILABLE / HELD / SOLD)</sub>
+
+### 📊 Grafana 관측
+
+#### SLO — 사용자 경험 (`ticketing-slo`)
+
+<img src="assets/티켓팅%20SLO.png" width="100%" alt="Grafana SLO — TPS, p95/p99, 5xx·429"/>
+
+<sub>HTTP TPS · 지연 p95/p99 · 5xx/429/409/404 오류율</sub>
+
+#### Funnel — `runId` 단일 run 드릴다운 (`ticketing-funnel`)
+
+<img src="assets/runid%20추적.png" width="100%" alt="Grafana Funnel — runId 변수, Join→Admission→Reserve→Pay"/>
+
+<sub>Ops 상단 <code>runId</code>와 동일 값 입력 · 퍼널 Stat(Δ) · 예약 실패 사유 · 결제 outcomes</sub>
+
+#### Bottleneck — 인프라·파이프라인 (`ticketing-bottlenecks`)
+
+<img src="assets/bottleneck.png" width="100%" alt="Grafana Bottleneck — Kafka, Redis, RabbitMQ, MySQL, HikariCP"/>
+
+<sub>Kafka/Redis up · 결제 큐 depth · consumer lag · DB pool · Redis memory</sub>
+
+> 시나리오 A~F별 Micrometer rate 패널은 **`ticketing-scenarios`** 대시보드 — 스크린샷은 `assets/티켓팅 시나리오.png` 참고.
+
+---
+
+## 🛠️ 2. 핵심 아키텍처 및 기술 스택
+
+### 🏗️ 시스템 아키텍처 흐름도
+
+```mermaid
+flowchart TB
+  subgraph client [Client Layer]
+    Browser[Browser / nGrinder Agent]
+  end
+  subgraph edge [Edge Layer]
+    Nginx[nginx - static + reverse proxy]
+  end
+  subgraph app [Application Layer]
+    API[Spring Boot API\nJWT + RateLimit + Domain]
+  end
+  subgraph data [Data & Messaging Layer]
+    MySQL[(MySQL - source of truth)]
+    Redis[(Redis Cluster - queue / lock / rate limit)]
+    Kafka[Kafka - domain events]
+    Rabbit[RabbitMQ - work queues]
+  end
+  subgraph observe [Observability Layer]
+    Prom[Prometheus]
+    Graf[Grafana]
+  end
+  Browser --> Nginx --> API
+  API --> MySQL
+  API --> Redis
+  API --> Kafka
+  Kafka --> API
+  API --> Rabbit
+  Rabbit --> API
+  API --> Prom
+  Prom --> Graf
+```
+
+### ⚡ 기술 스택 채택 배경 및 핵심 역할
+
+| 기술 | 프로젝트 내 필요성 및 핵심 역할 |
+|------|--------------------------------|
+| **Spring Boot 3.3 + Java 21** | 티켓팅 도메인 API, 스케줄러, JPA, Actuator를 한 프레임워크로 통합. **가상 스레드**로 대량 동시 HTTP 처리 |
+| **MySQL 8.4 + Flyway** | 좌석·예약·결제의 **최종 정합** Single Source of Truth, 스키마 버전 관리 자동화 |
+| **Redis Cluster + Redisson** | 대기열 ZSET, 입장 토큰 TTL, 분산 락, 슬라이딩 윈도우 Rate Limit — DB 앞단에서 트래픽 **1차 차단·흡수** |
+| **Apache Kafka** | 예약/취소 등 도메인 이벤트 버퍼링. API 스레드와 비동기 파이프라인 **격리** |
+| **RabbitMQ 3** | 결제·알림 작업 큐. 워커 동시성 조절 및 **큐 깊이(Depth)** 관측 |
+| **React + Vite** | 사용자 예매 플로우, Ops 실시간 폴링, 좌석 히트맵 |
+| **nginx** | 정적 파일 + `/api`, `/ws`, `/actuator`, `/grafana` **단일 진입점** 역프록시 |
+| **Prometheus + Grafana** | Micrometer 비즈니스 메트릭, SLI/SLO, 병목·퍼널 시계열 분석 |
+| **nGrinder** | 시나리오 A~F 기반 **재현 가능한 고부하** 검증 |
+
+### Redis 프로파일
+
+| 환경 | 설정 |
 |------|------|
-| API | Spring Boot 3.3, Java 21, 가상 스레드 |
-| 데이터 | MySQL 8.4, Flyway, JPA |
-| 캐시·대기열 | Redis 7 Cluster(6노드), Redisson, ZSET 기반 입장 |
-| 메시징 | Apache Kafka (Zookeeper), RabbitMQ 3 (관리 UI + Prometheus 플러그인 `15692`) |
-| 프론트 | React, Vite, Tailwind, nginx(정적 + API/WebSocket/Grafana 역프록시) |
-| 관측 | Micrometer, Spring Actuator `/actuator/prometheus`, Prometheus, Grafana(프로비저닝 대시보드) |
-| 부하 | nGrinder Controller + Agent (Docker), Groovy 스크립트는 `load-tests/ngrinder/scripts` |
+| `docker compose up` (전체 스택) | `SPRING_PROFILES_ACTIVE=redis-cluster`, 6노드 + `redis-cluster-init` |
+| 호스트에서 백엔드만 | 단일 Redis(6379) 또는 `REDIS_CLUSTER_NODES` 환경 변수 정렬 |
 
-## 사전 요구 사항
+---
 
-- Docker Engine + Docker Compose v2  
-- (로컬 백엔드만 실행 시) JDK 21, Maven 3.9+, Node.js 22+ 권장(Docker 프론트 빌드와 동일 계열)
+## 🗂️ 3. 백엔드 및 프론트엔드 특징
 
-## 빠른 시작 (전체 스택)
+### 📂 백엔드 도메인 패키지 (Spring Boot 모놀리식)
+
+기획서의 마이크로서비스 설계 요소를 **하나의 JVM** (`backend/`) 안 패키지로 통합했습니다.
+
+| 패키지 | 핵심 역할 |
+|--------|-----------|
+| `auth`, `user`, `security` | JWT 발급·검증, Spring Security 기반 회원가입/로그인 |
+| `event` | 공연·좌석 CRUD, `SeatViewCacheService` (좌석 조회 **5초 TTL**) |
+| `ticket` | `QueueService`, `AdmissionScheduler`, `ReservationService`, `ReservationExpiryScheduler` |
+| `payment` | Kafka → Rabbit 브릿지, PG 시뮬레이션 워커, `ReservationSettlementService` |
+| `ratelimit` | Redis Lua 슬라이딩 윈도우 IP/유저 제한 (`RateLimitFilter`) |
+| `messaging` | Kafka 토픽 프로듀서/컨슈머, RabbitMQ 큐 |
+| `metrics`, `api` | Micrometer 비즈니스 카운터, WebSocket/REST 대시보드 |
+| `ngrinder` | Ops 연동 시나리오 A~F, `runId` 주입, 결제 건수 기반 조기 종료 |
+
+**핵심 설계**
+
+- **대기열**: Redis `RScoredSortedSet` + 입장 토큰 버킷(TTL), 스케줄러 배치 입장
+- **예매 동시성**: Redisson `tryLock`(fail-fast) + MySQL 비관적 락
+- **결제 비동기화**: `ticket-reserved` → Rabbit `payment.queue` → 워커 → DB 정산
+- **관측**: `X-LoadTest-RunId` + MDC 로그, Actuator → Prometheus
+
+### 💻 프론트엔드 (React SPA + nginx)
+
+| 구분 | 내용 |
+|------|------|
+| **스택** | React, Vite, Tailwind CSS, React Router, 2초 간격 API 폴링 |
+| **사용자 UI** (`/`) | 로그인 → 공연 목록 → 대기열 폴링 → 좌석 예약 → 결제 진행 폴링 |
+| **운영 UI** (`/ops`) | 시나리오 A~F 실행, 좌석 히트맵, run-metrics, Grafana 링크 |
+| **역할 분담** | 정합·락·TTL은 백엔드. 프론트는 **상태 표시·부하 트리거·메트릭 Δ 근사** |
+
+---
+
+## 🎯 4. 부하 테스트 시나리오 (A ~ F) 및 검증 지표
+
+부하 시나리오는 nGrinder Groovy (`load-tests/ngrinder/scripts/10_` ~ `15_`)와 Ops **`POST /api/dashboard/ngrinder/scenarios/start`** 로 실행합니다.
+
+모든 실행에 **전역 `runId`** 가 발급되며, `X-LoadTest-RunId` 헤더와 로그 MDC로 단일 run을 추적합니다. (Prometheus 라벨로는 사용하지 않음 — 카디널리티 제한)
+
+상세: [load-tests/ngrinder/README.md](./load-tests/ngrinder/README.md) · [docs/operations/load-test-runbook.md](./docs/operations/load-test-runbook.md)
+
+### 📝 시나리오 요약 및 검증 목표
+
+| ID | 시나리오명 | 부하 트래픽 패턴 | 중점 검증 목표 |
+|:--:|------------|------------------|----------------|
+| **A** | Open Run Spike (썬더링 허드) | VUser **동시** `joinQueue` → 첫 가용석 예약 | 오픈 직후 스파이크에서 대기열·입장·좌석 락 경합 |
+| **B** | Hot Key / Lock | **1석**에 다수 동시 `reserve` | Redisson + DB 락으로 **정확히 1건** 성공 |
+| **C** | Retry Storm | `GET /seats` 무차별 폴링 | runId당 IP 10/초·유저 5/초 → 429 **방어 신호** (Docker 전역 한도와 별개) |
+| **D** | Zombie TTL | 예약 후 hold **60s**·결제 스킵·`sleepMs` 대기 | `ReservationExpiryScheduler` TTL 만료·좌석 **재가용** |
+| **E** | Baseline Ticketing | 좌석 수 × `crowdMultiplier` 정상 퍼널 | 재고·점유율·결제 파이프라인 **기준선** |
+| **F** | Integrated Random | A~E 마이크로 행동 랜덤 혼합 + 일회성 가입 | **복합 트래픽** 종합 내구도 |
+
+### 🖥️ Ops Dashboard KPI (`scenarioExtraKpis`)
+
+| 시나리오 | Ops 모니터링 주안점 | 비즈니스적 의미 |
+|:--:|---------------------|-----------------|
+| **A** | 대기열 진입 · 입장 토큰 · 좌석 락 실패 | 동시 유입 대비 입장 처리율, **첫 좌석 경쟁** 병목 |
+| **B** | 좌석 락 실패 · 대기열 · 입장 | 핫키 1석에서 **fail-fast** 동작 |
+| **C** | Rate limit 거절(429) · HTTP( runId ) · p99 | Redis 방어 레이어 + **읽기 부하** 영향 |
+| **D** | TTL 만료 · 결제 요청 · 대기/드롭 | 좀비 예약 회수 · **파이프라인 잔류** |
+| **E** | 판매 좌석 · 대기열 깊이 · 점유율 | 재고·매출 **정합 스냅샷** |
+| **F** | 대기열~예약 시도/성공 · 락/실패 · HTTP | 혼합 부하 시 **최초 포화 퍼널** 식별 |
+
+공통 KPI: 결제 성공/실패/처리중 — Kafka → Rabbit → 워커 파이프라인 건강도.
+
+### 📊 Prometheus / Micrometer 커스텀 메트릭
+
+메트릭 계약: [docs/observability/metrics-contract.md](./docs/observability/metrics-contract.md)
+
+| 메트릭명 | 형태 | 의미 | 주요 시나리오 |
+|----------|------|------|:-------------:|
+| `ticketing_queue_entered_total` | Counter | `joinQueue` 성공 누적 | A, B, E, F |
+| `ticketing_queue_admission_issued_total` | Counter | 입장 토큰 발급 누적 | A, B, E, F |
+| `ticketing_reservation_seat_lock_failed_total` | Counter | Redisson 락 획득 실패 | A, B, F |
+| `ticketing_ratelimit_rejected_total` | Counter | 429 차단 (`scope` 라벨) | C, F |
+| `http_server_requests_seconds_*` | Timer | TPS, p95/p99, 4xx/5xx | 전체 |
+| `ticketing_reservation_expired_total` | Counter | hold TTL 만료·회수 | D |
+| `ticketing_payment_requested_total` 등 | Counter/Gauge | 결제 파이프라인 | D, E, F |
+| `ticketing_integrity_mismatch_*` | Gauge | 정합 불일치 (**0이 정상**) | 전체 |
+
+**runId 드릴다운**: `GET /api/dashboard/run-metrics?runId=...` · Grafana Funnel `runId` 변수 · Loki/액세스 로그 MDC.
+
+**증분(Δ) 측정**: `scripts/run-scenarios-metrics.ps1` 또는 `business-metrics` 전후 스냅샷. 짧은 구간은 Grafana `rate()` 권장.
+
+---
+
+## 🔁 5. 요청 처리 흐름 (정상 예매 오케스트레이션)
+
+1. **인증** — `POST /api/auth/login` → JWT 발급
+2. **대기열** — `POST /api/events/{id}/queue` → Redis Sorted Set 등록 → `GET .../queue/me` 폴링
+3. **순차 입장** — `AdmissionScheduler`가 배치로 토큰 발급(TTL) → 클라이언트 `admissionToken` 확보
+4. **좌석 선점** — `POST .../reservations` → Redisson 락 → DB `HELD` → Kafka `ticket-reserved`
+5. **비동기 결제** — Kafka Consumer → Rabbit `payment.queue` → `PaymentWorkerConsumer` → MySQL `CONFIRMED`/`SOLD`
+6. **관측** — 단계별 Micrometer 카운터 → Ops / Grafana
+
+Rate limit은 **`RateLimitFilter`** (Redis Lua). 가입/로그인은 일반 API와 **별도 상한**입니다.
+
+---
+
+## 🛠️ 6. 문제 해결 가이드 (Troubleshooting)
+
+상세 이력: [docs/operations/troubleshooting.md](./docs/operations/troubleshooting.md) · [docs/changelog/](./docs/changelog/)
+
+| 관측 증상 | 원인 후보 | 확인·조치 순서 |
+|-----------|-----------|----------------|
+| nGrinder **`script should exist`** | 스크립트 미업로드 · 볼륨 초기화 | `.\load-tests\ngrinder\upload-scripts.ps1` 재실행 (`down -v` 후 **필수**) |
+| **`stop_by_error`** (Groovy) | 인증 실패 · `eventId` 누락 · 429 | Controller 로그 · `beforeThread` · `RATE_LIMIT_*` 완화 |
+| 시나리오 **C/F 지표 0** | 저부하 · `scriptRevision: -1` | `vusers` · `testDurationSec` 상향 · 스크립트 업로드 확인 |
+| **F** 매진 후에도 장시간 실행 / 히트맵 불일치 | `/seats` 캐시 · `baseUrl` 불일치 | `GET .../seats?refresh=true` · 단일 백엔드·스크립트 재배포 |
+| Ops **결제 Δ 정체** | Rabbit 적체 · progress 타임아웃 | `:15672` 큐 depth · `paymentWorkersSleeping` · Rate limit |
+| **`paymentRequested` 목표 미달** | 실행 시간 상한 · 좌석 SOLD 고정 | 최신 `05_all_in_one.groovy`(좌석 순환) 업로드 |
+| Redis **「클러스터 비활성」** | `redis-cluster-init` Exited | **정상** — `redis-node-1`~`6` Running 확인 |
+| Grafana **Redis up = 0** | PING 실패 · 프로파일 불일치 | `redis-cluster` · `REDIS_CLUSTER_NODES` |
+| **`admin is logined` 로그 반복** | Ops 상태 API 폴링 | 정상 동작; 노이즈 제거 시 nGrinder 로그 레벨 WARN |
+| Micrometer **누적 급감** | JVM 재시작 · LB 인스턴스 혼선 | 단일 인스턴스 검증 · `sum by (instance)` |
+| Prometheus **시계열 유실** | TSDB 볼륨 미마운트 | compose 재생성 시 초기화 — 장기 보관 시 볼륨 추가 검토 |
+
+**재현 시 첨부 권장**: nGrinder 테스트 로그, `X-LoadTest-RunId` access 로그, `run-metrics`, `business-metrics` 전후 스냅샷.
+
+---
+
+## 🚀 7. 빠른 시작 (Quick Start)
+
+### 📌 사전 요구 사항
+
+- Docker Engine + Docker Compose v2
+- (호스트 직접 빌드) JDK 21, Maven 3.9+, Node.js 22+
+
+### 🐳 전체 스택 기동
 
 ```bash
 docker compose up -d --build
 ```
 
-백엔드가 MySQL 헬스체크 이후 기동합니다. Redis 클러스터는 `redis-cluster-init`이 한 번 실행되어 토폴로지를 만듭니다.
+MySQL 헬스체크 후 백엔드가 기동합니다. `redis-cluster-init`은 토폴로지 결속 후 **Exited(0)이 정상**입니다.
 
-### 엔드포인트 (호스트 기준)
+### 🌐 통합 엔드포인트
 
-| 설명 | URL | 비고 |
-|------|-----|------|
-| 웹 앱 | [http://localhost](http://localhost) | nginx → `/api`, `/ws`, `/actuator` 프록시 |
-| **운영 대시보드 (Ops)** | [http://localhost/ops](http://localhost/ops) | 로그인 후 · 부하 실행·히트맵·runId·Grafana 바로가기 |
-| API·Actuator 직접 | [http://localhost:8080](http://localhost:8080) | 컨테이너 백엔드 포트 노출 |
-| Prometheus | [http://localhost:9090](http://localhost:9090) | TSDB는 compose에 볼륨 없음 → 컨테이너 재생성 시 시계열 초기화 |
-| Grafana | [http://localhost/grafana](http://localhost/grafana) | `admin` / `admin`, 서브패스 `/grafana` |
-| Grafana 직접 | [http://localhost:3000](http://localhost:3000) | 동일 인스턴스, 루트 URL로 접속 |
-| RabbitMQ 관리 | [http://localhost:15672](http://localhost:15672) | `guest` / `guest` |
-| RabbitMQ Prometheus | (내부) `rabbitmq:15692` | 호스트는 `15692` 포트 매핑, Prometheus가 스크랩 |
-| nGrinder UI | [http://localhost:19080](http://localhost:19080) | `admin` / `admin`, Windows 포트 충돌 회피용 리매핑 |
-| MySQL | `localhost:3306` | DB `ticketing`, 사용자 `ticketing` / `ticketing` |
-| Kafka | `localhost:9092` | 단일 브로커(ZK 기반) |
+| 서비스 | URL | 인증 | 용도 |
+|--------|-----|------|------|
+| 사용자 웹 앱 | http://localhost | 회원가입 | 엔드유저 예매 플로우 |
+| **Ops** | http://localhost/ops | 로그인 | 부하·히트맵·run-metrics |
+| 백엔드 API | http://localhost:8080 | — | REST · Actuator 직접 |
+| Prometheus | http://localhost:9090 | — | Raw 메트릭 · PromQL |
+| Grafana | http://localhost/grafana | `admin` / `admin` | SLO · 병목 · 퍼널 |
+| nGrinder | http://localhost:19080 | `admin` / `admin` | VUser · 에이전트 |
+| RabbitMQ | http://localhost:15672 | `guest` / `guest` | 결제 큐 depth |
 
-### 초기 데이터
+### 🌱 초기 데이터 및 환경 리셋
 
-- DB가 비어 있으면 `SeedDataRunner`가 **공연 1건(`Summer Live 2025`) + 좌석 100석(A1~A100)** 을 생성합니다.  
-- 사용자 계정은 시드하지 않습니다. UI에서 회원가입하거나, 부하 스크립트·관리 API에서 사용하는 계정을 따로 준비합니다.
-
-### 데이터·관측 초기화
-
-이름 붙은 볼륨을 지우면 DB·Grafana·nGrinder 컨트롤러 저장소가 함께 초기화됩니다.
+- DB가 비어 있으면 `SeedDataRunner`가 **공연 1건 + 좌석 100석** 생성. 사용자는 시드하지 않음.
+- UI 회원가입 또는 부하 스크립트가 계정을 생성합니다.
 
 ```bash
 docker compose down -v
 docker compose up -d --build
+.\load-tests\ngrinder\upload-scripts.ps1
 ```
 
-- **nGrinder**: 컨트롤러 볼륨이 비면 스크립트 저장소가 비어 있습니다. 아래를 다시 실행하세요.  
-  `.\load-tests\ngrinder\upload-scripts.ps1` (기본 컨트롤러 URL: `http://localhost:19080`)  
-  자세한 절차: [load-tests/ngrinder/README.md](./load-tests/ngrinder/README.md)
+### 로컬 개발 (IDE)
 
-## 로컬 개발 (IDE에서 백엔드·프론트만)
+1. 인프라만 Compose: `mysql`, `redis-node-*`, `redis-cluster-init`, `zookeeper`, `kafka`, `rabbitmq`
+2. 백엔드: `cd backend && mvn spring-boot:run`
+3. 프론트: `cd frontend && npm install && npm run dev` — Vite가 `/api`, `/ws`를 `localhost:8080`으로 프록시
 
-1. 인프라만 Compose로 띄우기 (예시):  
-   `docker compose up -d mysql redis-node-1 redis-node-2 redis-node-3 redis-node-4 redis-node-5 redis-node-6 redis-cluster-init zookeeper kafka rabbitmq`  
-   백엔드를 호스트에서 돌릴 때는 Redis 클러스터 노드 주소를 환경 변수로 맞추거나, 단일 Redis를 쓰는 프로파일로 전환합니다.
-2. 백엔드: `cd backend && mvn spring-boot:run`  
-3. 프론트: `cd frontend && npm install && npm run dev` — Vite가 `/api`, `/ws`를 `localhost:8080`으로 프록시합니다.
+---
 
-### Redis 프로파일
+## 📊 8. 관측성 아키텍처 및 문서
 
-| 실행 환경 | 설정 |
-|-----------|------|
-| 위 Docker Compose 전체 | `SPRING_PROFILES_ACTIVE=redis-cluster`, `REDIS_CLUSTER_NODES=...` (compose에 이미 설정) |
-| 단일 Redis(로컬 6379) | `redis-cluster` 프로파일을 쓰지 않고 기본 `application.yml`의 단일 노드 설정 사용 |
+### 📈 Grafana 대시보드 역할
 
-## 아키텍처 요약
+| 대시보드 | 경로 | 모니터링 목적 |
+|----------|------|---------------|
+| **SLO** | `/grafana/d/ticketing-slo/ticketing-slo` | HTTP TPS, p95/p99, 5xx/429 |
+| **Bottleneck** | `/grafana/d/ticketing-bottlenecks/ticketing-bottlenecks` | Kafka/Redis up, 큐·결제 파이프라인, lag, MySQL, Redis, Hikari |
+| **Scenarios** | `/grafana/d/ticketing-scenarios/ticketing-scenarios` | A~F Micrometer rate |
+| **Funnel** | `/grafana/d/ticketing-funnel/ticketing-funnel` | Join → Admission → Reserve → Pay, `runId` |
 
-- **대기열**: Redis `ZSET`, 스케줄러가 배치 입장 후 입장 토큰(TTL) 발급  
-- **예매**: Redisson 좌석 락 + JPA 비관적 락으로 좌석 상태 갱신 → Kafka `ticket-reserved` 등 이벤트 발행  
-- **비동기 결제·알림**: Kafka Consumer가 RabbitMQ 큐(`payment.queue` 등)로 전달 → 워커 소비(동시성은 `PAYMENT_WORKER_CONCURRENCY` 등으로 조절)  
-- **실시간 대시보드**: WebSocket으로 TPS·지연·큐 깊이 등 스냅샷 푸시; 일부 비즈니스 지표는 REST 집계
-- **운영 대시보드 (Ops)**: 시나리오 A~F 실행·상태·좌석 히트맵, `X-LoadTest-RunId` 기반 **run-metrics** 드릴다운, 결제는 전역 카운터 + 테스트 시작 시점 **베이스라인 Δ**(비동기 파이프라인 한계는 UI에 안내)
+**Ops vs Grafana**
 
-상세 기획·흐름: [기획서.md](./기획서.md), 보조 다이어그램: [flowchart_comparison.md](./flowchart_comparison.md)
+- **Ops** — 단일 Run 조작, 즉시 KPI, 좌석 히트맵
+- **Grafana** — 시계열 추세, 인프라 깊이, SLO
 
-시나리오·Grafana·runId 운영 요약: [docs/scenario-ops-grafana-runbook.md](./docs/scenario-ops-grafana-runbook.md) · 메트릭 계약: [docs/metrics-contract.md](./docs/metrics-contract.md)
-
-## 관측 (Prometheus / Grafana)
-
-- **스크랩 대상** (`docker/prometheus.yml`):  
-  - `ticketing` → `backend:8080/actuator/prometheus`  
-  - `rabbitmq` → `rabbitmq:15692/metrics` (큐 ready/unacked 등; `docker/rabbitmq/rabbitmq.conf`에서 per-object 메트릭 활성화)
-- **Grafana**: `docker/grafana/provisioning`으로 데이터소스·대시보드 자동 로드. **프로비저닝 대시보드는 아래 4종**(파일은 `docker/grafana/dashboards/*.json`).
-- **프론트에서 Grafana**: nginx가 `/grafana/`를 Grafana로 넘기므로, 브라우저에서는 `http://localhost/grafana/` 로 접근하는 구성과 맞습니다.
-
-### Grafana 대시보드 4종 (역할이 서로 다름)
-
-| 대시보드 | UID (경로) | 용도 |
-|----------|------------|------|
-| 티켓팅 SLO (사용자 체감) | `/grafana/d/ticketing-slo/ticketing-slo` | TPS, p95/p99, 5xx/429, Hikari, Tomcat **시계열** |
-| 티켓팅 병목 추적 | `/grafana/d/ticketing-bottlenecks/ticketing-bottlenecks` | Kafka/Redis up, Rabbit depth, consumer lag, MySQL 연결, Redis eviction 등 **원인 분해** |
-| 티켓팅 시나리오 (A~F) | `/grafana/d/ticketing-scenarios/ticketing-scenarios` | 비즈 카운터 **rate**로 시나리오별 패턴 비교 |
-| 티켓팅 Funnel | `/grafana/d/ticketing-funnel/ticketing-funnel` | Join→Admission→Reserve→Pay 퍼널, **runId** 변수·Loki 링크 |
-
-Ops 상단에서 동일 4종으로 바로 열 수 있습니다. Ops는 **한 번의 부하 테스트**를 돌리며 run-metrics·히트맵·nGrinder를 묶어 보여 주고, Grafana는 **기간·추세·인프라 깊이**에 유리합니다(숫자 축이 겹쳐 보일 수 있으나 데이터 소스·목적이 다릅니다).
-
-## nGrinder 부하 테스트
-
-- UI: `http://localhost:19080`  
-- 컨테이너 안에서 백엔드를 칠 때는 `TICKETING_NGRINDER_TARGET_BASE_URL`(기본 `http://host.docker.internal:8080`) 등으로 **에이전트가 도달 가능한 URL**을 지정합니다.  
-- **Ops**(`/ops`)에서 시나리오 선택 실행 시, 백엔드가 `runId`를 발급하고 Groovy가 `X-LoadTest-RunId` 헤더로 전달합니다. run-metrics는 `GET /api/dashboard/run-metrics?runId=...` 로 조회합니다.  
-- 컨트롤러에 스크립트가 없으면 API가 업로드 안내를 반환합니다. 볼륨 초기화 후에는 `upload-scripts.ps1`을 다시 실행하세요.  
-- 스크립트 업로드·시나리오 설명: [load-tests/ngrinder/README.md](./load-tests/ngrinder/README.md)
-
-## 저장소 구조 (요약)
+### 📁 저장소 구조
 
 ```
-backend/          Spring Boot API, 도메인, Flyway 마이그레이션
-docs/             시나리오·runbook, 메트릭 계약, 변경 메모
-frontend/         Vite React SPA, nginx 설정(Docker)
-load-tests/ngrinder/   Groovy 스크립트, upload-scripts.ps1
-docker/           prometheus.yml, grafana provisioning, rabbitmq.conf
-docker-compose.yml
+ticketing_server/
+├── assets/                  # README 스크린샷 (데모 캡처)
+├── backend/                 # Spring Boot API, Flyway, 도메인
+├── frontend/                # React SPA, nginx (Docker)
+├── load-tests/ngrinder/     # 시나리오 A~F Groovy, upload-scripts.ps1
+├── docker/                  # Prometheus, Grafana, RabbitMQ 설정
+└── docs/                    # 기술 문서 (observability / operations / changelog)
+    ├── assets/              # (선택) demo.mp4 · screenshots/ 영문 파일명
+    ├── observability/
+    ├── operations/
+    └── changelog/
 ```
 
-## 변경·검토 노트
+### 📚 상세 문서
 
-- [docs/change-notes-review.md](./docs/change-notes-review.md) — 검토용 누적 메모  
-- [docs/change-notes-ops-loadtest-metrics.md](./docs/change-notes-ops-loadtest-metrics.md) — Ops·부하·메트릭 관련 변경 요약
+전체 색인: **[docs/README.md](./docs/README.md)**
 
-## 최근 변경 요약 (Ops / nGrinder / 좌석 조회)
-
-다음은 본 브랜치에서 추가·수정된 동작을 한곳에 모은 것입니다(세부는 커밋 로그·`docs/` 참고).
-
-| 영역 | 내용 |
+| 문서 | 내용 |
 |------|------|
-| **Ops** | 시나리오 A~F, runId·run-metrics, 결제 전역+베이스라인 Δ, Grafana 4종 링크(Funnel 포함), nGrinder 상태 폴링 5초 간격(컨트롤러 `admin is logined` 로그 빈도 완화) |
-| **runId** | `NgrinderDashboardController`가 `param`에 `runId` 주입, Groovy가 `X-LoadTest-RunId` 전송, `RequestDebugContextFilter`·`RunScopedMetricsStore`·`GET /api/dashboard/run-metrics` |
-| **IP 레이트리밋** | 동일 IP에서 대량 가입/로그인 시 429 완화: `POST /api/auth/register`, `/api/auth/login`은 별도 Redis 키·높은 상한(일반 `/api` 한도와 분리) |
-| **시나리오 F (Groovy)** | `beforeThread` 지터, `registerOrLogin` 재시도, 매진 감지 시 루프 조기 종료, `param`의 `grinder.properties` fallback |
-| **좌석 API** | `GET /api/events/{id}/seats?refresh=true` 시 캐시 무효화 후 DB 재조회. `SeatViewCacheService`는 캐시 **5초 TTL**로 오래 낡은 스냅샷 완화 |
-| **nGrinder 업로드** | `upload-scripts.ps1`가 업로드 전 `DELETE /script/api/{파일명}`로 기존 엔트리 제거(루트에 파일만 있어 `script should exist` 나는 경우 대비) |
-
-## 알려진 제한·미해결 (확인 필요)
-
-아래는 **현재까지 보고되었으나, 환경·재현 조건에 따라 여전히 재발할 수 있는** 구간입니다. 원인 가설과 확인 순서를 적어 둡니다.
-
-| 증상 | 가설·확인 순서 |
-|------|----------------|
-| **시나리오 F가 매진 후에도 길게 돌거나, Ops 히트맵과 스크립트 판단이 엇갈림** | 히트맵은 DB 기반, 스크립트는 `/seats`를 사용. `?refresh=true`·캐시 TTL로 맞췄으나, **에이전트가 치는 `baseUrl`이 Ops가 보는 백엔드와 다르거나**(다른 인스턴스/오래된 컨테이너), **스크립트가 컨트롤러에 재업로드되지 않은** 경우 이전 동작이 남을 수 있음 → `upload-scripts.ps1` 재실행·백엔드 재기동·단일 `baseUrl` 통일 확인. |
-| **`script should exist` (nGrinder)** | 컨트롤러 SVN에 스크립트가 없거나, **파일만 있고 `이름.groovy/이름.groovy` DIR 구조가 아닐 때** 발생. `upload-scripts.ps1`로 전부 다시 올리기(`docker compose down -v`로 nGrinder 볼륨이 초기화된 경우 필수). |
-| **`stop_by_error`** | Groovy `beforeThread`·`@Test`에서 미처리 예외(로그인 실패, `eventId` 누락 등). IP 레이트리밋·재시도를 완화했으나, **호스트 실행 + 기본 `application.yml` 레이트리밋**이면 여전히 429 가능 → `docker-compose`의 `RATE_LIMIT_*` 또는 일시적으로 `RATE_LIMIT_ENABLED=false`로 분리 검증. |
-| **nGrinder `admin is logined` 반복 로그** | 백엔드가 Basic 인증으로 상태 API를 폴링할 때마다 컨트롤러가 INFO로 남김. Ops 폴링 간격을 늘렸을 뿐, **로그 자체를 없애지는 못함**(컨트롤러 로그 레벨 조정 필요). |
-
-추가로 재현·로그(nGrinder 테스트 로그, 백엔드 `runId` 포함 access 로그, `GET .../seats?refresh=true` 응답 샘플)를 이슈에 붙이면 원인 좁히기에 유리합니다.
-
-## 마무리 체크리스트 (README·녹화·노션)
-
-README는 위 내용으로 **현재 구성과 URL**을 반영한 상태입니다. 남은 작업은 팀/발표용 자료 정리입니다.
-
-| 작업 | 제안 |
-|------|------|
-| **녹화 영상** | (1) `docker compose up` 후 로그인 → `/ops` (2) 시나리오 1~2개 짧게 실행 (3) `runId` 툴팁·run-metrics KPI·히트맵 (4) Grafana 4종 중 Funnel에 runId 전달·Scenarios에서 rate 확인 (5) nGrinder Controller에서 종료 상태 |
-| **노션** | 한 페이지에 **URL 표**(웹, Ops, Grafana×4, Prometheus, nGrinder) + **역할 한 줄**(Ops=단일 테스트 조작, Grafana=시계열·병목) + **runId 흐름**(헤더 → MDC → run-metrics) + 스크립트 재업로드 주의 + 위 `docs/` 링크 |
-
-외부 위키로 옮길 때는 이 README의 표·절만 복사해도 됩니다.
+| [기획서.md](./기획서.md) | 목표 아키텍처·동시성 전략 |
+| [flowchart_comparison.md](./flowchart_comparison.md) | 기획 vs 현재 구현 |
+| [docs/observability/metrics-contract.md](./docs/observability/metrics-contract.md) | 지표 이름·의미·알람 |
+| [docs/observability/grafana-and-prometheus.md](./docs/observability/grafana-and-prometheus.md) | Grafana 4종·runId·Prometheus |
+| [docs/operations/load-test-runbook.md](./docs/operations/load-test-runbook.md) | 시나리오 A~F·Δ 측정 |
+| [docs/operations/ops-dashboard.md](./docs/operations/ops-dashboard.md) | `/ops`·`business-metrics` |
+| [docs/operations/troubleshooting.md](./docs/operations/troubleshooting.md) | 증상별 조치 |
+| [docs/changelog/](./docs/changelog/) | 세션별 변경 아카이브 |

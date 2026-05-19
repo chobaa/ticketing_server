@@ -178,9 +178,20 @@ public class BusinessMetrics {
     }
 
     public void incAdmissionIssued() {
+        incAdmissionIssued(RunScopedMetricsStore.currentRunIdOrNull());
+    }
+
+    /** {@code explicitRunId} is used when admission is issued from a scheduler (no HTTP MDC). */
+    public void incAdmissionIssued(String explicitRunId) {
         admissionIssued.increment();
         clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_ADMISSION_ISSUED, 1);
-        runScoped.incAdmissionIssued(RunScopedMetricsStore.currentRunIdOrNull());
+        String runId = explicitRunId;
+        if (runId == null || runId.isBlank()) {
+            runId = RunScopedMetricsStore.currentRunIdOrNull();
+        }
+        if (runId != null && !runId.isBlank()) {
+            runScoped.incAdmissionIssued(runId.trim());
+        }
     }
 
     public void incSeatLockFailed() {
@@ -215,9 +226,19 @@ public class BusinessMetrics {
     }
 
     public void incReservationExpired() {
+        incReservationExpired(RunScopedMetricsStore.currentRunIdOrNull());
+    }
+
+    public void incReservationExpired(String explicitRunId) {
         reservationExpired.increment();
         clusterCounters.increment(ClusterBusinessMetricsBridge.SUFFIX_RESERVATION_EXPIRED, 1);
-        runScoped.incReservationExpired(RunScopedMetricsStore.currentRunIdOrNull());
+        String runId = explicitRunId;
+        if (runId == null || runId.isBlank()) {
+            runId = RunScopedMetricsStore.currentRunIdOrNull();
+        }
+        if (runId != null && !runId.isBlank()) {
+            runScoped.incReservationExpired(runId.trim());
+        }
     }
 
     public void incRateLimitRejected(String scope) {

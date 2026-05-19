@@ -23,6 +23,7 @@ public class QueueService {
     private final EventRepository eventRepository;
     private final ReservationEventProducer reservationEventProducer;
     private final com.ticketing.metrics.BusinessMetrics businessMetrics;
+    private final com.ticketing.metrics.LoadTestRunAttributionService loadTestRunAttribution;
 
     @Value("${ticketing.queue.token-ttl-seconds}")
     private int tokenTtlSeconds;
@@ -44,6 +45,8 @@ public class QueueService {
         double score = System.currentTimeMillis();
         z.add(score, String.valueOf(userId));
         businessMetrics.incQueueEntered();
+        loadTestRunAttribution.remember(
+                eventId, userId, com.ticketing.metrics.RunScopedMetricsStore.currentRunIdOrNull());
         Integer rank = z.rank(String.valueOf(userId));
         int position = rank != null ? rank + 1 : z.size();
         reservationEventProducer.publishQueueEnter(
@@ -104,6 +107,7 @@ public class QueueService {
             redissonClient.getKeys().deleteByPattern("admission:" + eventId + ":*");
         } catch (Exception ignored) {
         }
+        loadTestRunAttribution.purgeEvent(eventId);
     }
 
     public long getWaitingCount(long eventId) {

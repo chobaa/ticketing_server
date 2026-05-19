@@ -19,11 +19,18 @@ public class PaymentReservedConsumer {
 
     private final ObjectMapper objectMapper;
     private final ReservationEventProducer reservationEventProducer;
+    private final com.ticketing.metrics.LoadTestRunAttributionService loadTestRunAttribution;
 
     @KafkaListener(topics = KafkaTopics.TICKET_RESERVED, groupId = "${spring.kafka.consumer.group-id}-payment")
     public void onTicketReserved(String payload) {
         try {
             TicketReservedEvent event = objectMapper.readValue(payload, TicketReservedEvent.class);
+            if (loadTestRunAttribution.shouldSkipPayment(event.eventId(), event.userId())) {
+                log.info(
+                        "Skipping payment pipeline for load-test zombie TTL reservationId={}",
+                        event.reservationId());
+                return;
+            }
             reservationEventProducer.publishPaymentRequested(new PaymentRequestedEvent(
                     event.reservationId(),
                     event.userId(),

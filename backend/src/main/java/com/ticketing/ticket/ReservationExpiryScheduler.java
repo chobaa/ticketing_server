@@ -24,6 +24,7 @@ public class ReservationExpiryScheduler {
     private final ReservationRepository reservationRepository;
     private final ReservationSettlementService settlementService;
     private final BusinessMetrics businessMetrics;
+    private final com.ticketing.metrics.LoadTestRunAttributionService loadTestRunAttribution;
 
     @Scheduled(fixedDelayString = "${ticketing.reservation.expiry.interval-ms:5000}")
     public void expirePendingReservations() {
@@ -33,8 +34,16 @@ public class ReservationExpiryScheduler {
         }
         for (Long id : expiredIds) {
             try {
+                String runId =
+                        reservationRepository
+                                .findById(id)
+                                .map(
+                                        r ->
+                                                loadTestRunAttribution.resolve(
+                                                        r.getEventId(), r.getUserId()))
+                                .orElse(null);
                 settlementService.settleFailure(id, "EXPIRED", false);
-                businessMetrics.incReservationExpired();
+                businessMetrics.incReservationExpired(runId);
             } catch (Exception e) {
                 log.debug("expire failed reservationId={} err={}", id, e.getMessage());
             }

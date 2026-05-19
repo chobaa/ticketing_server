@@ -28,15 +28,6 @@ groups:
           summary: "Hikari pending connections"
           description: "DB pool starvation suspected: pending > 0 for 1m."
 
-      - alert: TicketingTomcatThreadsSaturated
-        expr: (sum(tomcat_threads_current{job="ticketing"}) / sum(tomcat_threads_config_max{job="ticketing"})) > 0.9
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Tomcat threads near max"
-          description: "Tomcat current/max > 0.9 for 2m."
-
   - name: ticketing_pipeline
     rules:
       - alert: TicketingKafkaLagHigh
@@ -49,13 +40,13 @@ groups:
           description: "Total consumer lag > 1000 for 2m."
 
       - alert: TicketingRabbitQueueGrowing
-        expr: sum(rabbitmq_queue_messages{queue="payment.queue"}) > 1000
+        expr: max(ticketing_payment_queue_depth{job="ticketing"}) > 1000
         for: 2m
         labels:
           severity: warning
         annotations:
           summary: "Rabbit payment queue depth high"
-          description: "payment.queue depth > 1000 for 2m."
+          description: "ticketing_payment_queue_depth > 1000 for 2m."
 
   - name: ticketing_integrity
     rules:

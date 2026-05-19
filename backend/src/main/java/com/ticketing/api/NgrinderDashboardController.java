@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ticketing.api.dto.CreateEventRequest;
 import com.ticketing.event.Event;
 import com.ticketing.event.EventService;
+import com.ticketing.metrics.LoadTestRunAttributionService;
+import com.ticketing.metrics.LoadTestRunProfile;
 import com.ticketing.ngrinder.NgrinderClient;
 import com.ticketing.ngrinder.NgrinderPaymentCountRunner;
 import com.ticketing.payment.PaymentQueueMaintenanceService;
@@ -33,6 +35,7 @@ public class NgrinderDashboardController {
     private final NgrinderPaymentCountRunner paymentCountRunner;
     private final PaymentQueueMaintenanceService paymentQueueMaintenanceService;
     private final EventService eventService;
+    private final LoadTestRunAttributionService loadTestRunAttribution;
 
     @Value("${ticketing.ngrinder.target-base-url:http://host.docker.internal:8080}")
     private String defaultTargetBaseUrl;
@@ -577,6 +580,7 @@ public class NgrinderDashboardController {
             @RequestParam(required = false) Integer eventSeatCount,
             @RequestParam(required = false) Integer testDurationSec,
             @RequestParam(required = false) Integer sleepMs,
+            @RequestParam(required = false) Integer holdTtlSeconds,
             @RequestParam(required = false) Integer crowdMultiplier) {
         if (scenario == null || scenario.isBlank()) {
             ObjectNode err = JsonNodeFactory.instance.objectNode();
@@ -732,11 +736,16 @@ public class NgrinderDashboardController {
             case "D" -> {
                 body.put("testName", "Scenario D (Zombie TTL) " + now);
                 body.put("scriptName", "13_scenario_d_zombie_ttl.groovy/13_scenario_d_zombie_ttl.groovy");
-                int sm = (sleepMs == null || sleepMs < 0) ? 70_000 : sleepMs;
+                int holdSec = (holdTtlSeconds == null || holdTtlSeconds < 1) ? 60 : Math.min(600, holdTtlSeconds);
+                int sm =
+                        (sleepMs == null || sleepMs < 0)
+                                ? (holdSec * 1000 + 15_000)
+                                : sleepMs;
+                param.append("holdTtlSeconds=").append(holdSec).append(";");
                 param.append("sleepMs=").append(sm).append(";");
                 body.put("threshold", "R");
                 body.put("runCount", 1);
-                durationMs = sm + 30_000L;
+                durationMs = sm + 45_000L;
             }
             case "E" -> {
                 body.put("testName", "Scenario E (Baseline Ticketing) " + now);
@@ -776,6 +785,19 @@ public class NgrinderDashboardController {
                 ((ObjectNode) created).put("ngrinderVusers", vu);
                 ((ObjectNode) created).put("ngrinderThreads", th);
                 ((ObjectNode) created).put("loadTestRunId", runId);
+                if ("C".equals(sc)) {
+                    loadTestRunAttribution.rememberProfile(runId, LoadTestRunProfile.retryStormRateLimit());
+                }
+                if ("D".equals(sc)) {
+                    int holdSec = (holdTtlSeconds == null || holdTtlSeconds < 1) ? 60 : Math.min(600, holdTtlSeconds);
+                    loadTestRunAttribution.rememberProfile(runId, LoadTestRunProfile.zombieTtl(holdSec));
+                    long testId = created.path("id").asLong(0L);
+                    if (testId > 0L) {
+                        paymentCountRunner.stopWhenRunReservationExpiredReached(
+                                testId, runId, vu, durationMs + 90_000L);
+                        paymentCountRunner.stopOnTimeout(testId, durationMs + 120_000L);
+                    }
+                }
             }
             return ResponseEntity.ok(created);
         } catch (RestClientResponseException ex) {

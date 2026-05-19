@@ -15,13 +15,15 @@
   "timezone": "browser",
   "title": "티켓팅 SLO (사용자 체감)",
   "uid": "ticketing-slo",
-  "version": 1,
+  "version": 2,
+  "description": "HTTP 기반 SLI만 표시합니다. 부하는 Bottleneck 대시보드를 보세요.",
   "panels": [
     {
       "id": 1,
       "type": "timeseries",
-      "title": "TPS (app, req/s)",
-      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 7 },
+      "title": "TPS (HTTP, req/s)",
+      "description": "Spring Actuator `http_server_requests_seconds_count`. 부하 테스트 중에만 곡선이 보입니다.",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
       "targets": [
         {
           "refId": "A",
@@ -29,14 +31,15 @@
           "legendFormat": "req/s"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "reqps", "min": 0 }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
     },
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Latency (p95/p99, ms)",
-      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 7 },
+      "title": "Latency (p95 / p99, ms)",
+      "description": "전체 HTTP 요청 지연. 트래픽이 없으면 No data일 수 있습니다.",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 },
       "targets": [
         {
           "refId": "A",
@@ -49,69 +52,44 @@
           "legendFormat": "p99"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "ms", "min": 0 }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
     },
     {
       "id": 3,
       "type": "timeseries",
-      "title": "Error rate (5xx / 429)",
-      "gridPos": { "x": 0, "y": 7, "w": 12, "h": 7 },
+      "title": "Error & rejection rate (per s)",
+      "description": "No data가 아니라 0이면 정상에 가깝습니다. F에서는 409(좌석 경쟁)·404(입장 대기)가 흔하고, 429는 시나리오 C 또는 한도 초과 시에만 올라갑니다. 5xx가 0이면 서버 장애 없음.",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(http_server_requests_seconds_count{job=\"ticketing\",status=~\"5..\"}[1m]))",
+          "expr": "sum(rate(http_server_requests_seconds_count{job=\"ticketing\",status=~\"5..\"}[1m])) or on() vector(0)",
           "legendFormat": "5xx/s"
         },
         {
           "refId": "B",
-          "expr": "sum(rate(http_server_requests_seconds_count{job=\"ticketing\",status=\"429\"}[1m]))",
-          "legendFormat": "429/s"
-        }
-      ],
-      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
-    },
-    {
-      "id": 4,
-      "type": "timeseries",
-      "title": "HikariCP (active/pending)",
-      "gridPos": { "x": 12, "y": 7, "w": 12, "h": 7 },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(hikaricp_connections_active{job=\"ticketing\"})",
-          "legendFormat": "active"
+          "expr": "sum(rate(http_server_requests_seconds_count{job=\"ticketing\",status=\"429\"}[1m])) or on() vector(0)",
+          "legendFormat": "429 HTTP/s"
         },
         {
-          "refId": "B",
-          "expr": "sum(hikaricp_connections_pending{job=\"ticketing\"})",
-          "legendFormat": "pending"
-        }
-      ],
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
-    },
-    {
-      "id": 5,
-      "type": "timeseries",
-      "title": "Tomcat threads (current / max)",
-      "gridPos": { "x": 0, "y": 14, "w": 12, "h": 7 },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(tomcat_threads_current{job=\"ticketing\"})",
-          "legendFormat": "current"
+          "refId": "C",
+          "expr": "sum(rate(ticketing_ratelimit_rejected_total{job=\"ticketing\"}[1m])) or on() vector(0)",
+          "legendFormat": "rate limit (biz)/s"
         },
         {
-          "refId": "B",
-          "expr": "sum(tomcat_threads_config_max{job=\"ticketing\"})",
-          "legendFormat": "max"
+          "refId": "D",
+          "expr": "sum(rate(http_server_requests_seconds_count{job=\"ticketing\",status=\"409\"}[1m])) or on() vector(0)",
+          "legendFormat": "409 conflict/s"
+        },
+        {
+          "refId": "E",
+          "expr": "sum(rate(http_server_requests_seconds_count{job=\"ticketing\",status=\"404\"}[1m])) or on() vector(0)",
+          "legendFormat": "404/s"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "reqps", "min": 0 }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
     }
   ]
 }
-

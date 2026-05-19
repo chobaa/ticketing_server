@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   api,
   type DashboardStatusDto,
@@ -29,6 +29,24 @@ function fmtNum1(n: number | undefined | null): string {
 function fmtPct01(r: number | undefined | null): string {
   if (r == null || !Number.isFinite(r)) return '—'
   return `${Math.round(r * 100)}%`
+}
+
+/** Short hint shown below nGrinder controls for the selected scenario. */
+function scenarioLoadTestHint(sc: 'A' | 'B' | 'C' | 'D' | 'E' | 'F'): string {
+  switch (sc) {
+    case 'A':
+      return 'VUser당 1석만 예약합니다. 좌석을 vusers 근처로 두면 히트맵에서 경쟁이 잘 보이고, 훨씬 크게 두면 잔여(회색)가 많아져 한눈에 보기 어렵습니다.'
+    case 'B':
+      return '항상 좌석 1석만 만들며(핫키), 위 좌석 수 입력은 무시됩니다. Ops 시나리오 지표 3개는 락 실패·대기열·입장 순이며, 히트맵은 단일 칸 경쟁만 보입니다.'
+    case 'C':
+      return '/seats 폴링만 합니다. 이 runId에는 IP 10회/초·유저 5회/초 한도가 적용됩니다(Docker 전역 10000과 별개). vusers·testDurationSec을 올리면 Rate limit 거절(429)이 Ops·run-metrics에 쌓입니다.'
+    case 'D':
+      return 'Scenario D는 hold TTL 60초·결제 스킵(좀비)으로 실행됩니다. sleepMs 기본은 TTL+15초이며, 만료 후 좌석이 풀리면 VUser가 조기 종료하고 백엔드가 nGrinder 테스트를 중지합니다.'
+    case 'E':
+      return 'vusers/threads는 API에 보내지 않으며, 서버가 vusers≈좌석×배수로 정합니다. 좌석×배수가 커질수록 nGrinder VUser가 같이 커집니다. Ops에서 로드테스트 이벤트를 고르면 판매/대기열/점유율이 해당 이벤트 기준으로 보입니다.'
+    case 'F':
+      return 'A~E 동작을 랜덤 혼합합니다. 기본은 wall-clock testDurationSec(30 미만이면 서버 180초)까지 반복하며, 스크립트는 AVAILABLE 좌석이 없으면 그 전에 조기 종료합니다. 로컬에서는 vusers·좌석·시간을 줄여도 됩니다. 좌석은 vusers보다 작으면 서버가 vusers 이상으로 맞춥니다.'
+  }
 }
 
 /** Extra KPI cards per scenario (mostly 3; F is mixed load so a wider funnel). */
@@ -110,25 +128,17 @@ function scenarioExtraKpis(
       ]
     case 'F':
       return [
-        { label: '대기열 진입(누적)', value: fmtInt(bm.queueEnteredTotal), hint: 'A/D/E 조각 · joinQueue' },
+        { label: '대기열 진입(누적)', value: fmtInt(bm.queueEnteredTotal), hint: 'joinQueue' },
         { label: '입장 토큰 발급(누적)', value: fmtInt(bm.admissionIssuedTotal), hint: '입장 스케줄러' },
-        {
-          label: '예약 시도(누적)',
-          value: fmtInt(bm.reservationAttemptedTotal),
-          hint: 'reserve 호출(혼합 쓰기 부하)',
-        },
-        { label: '예약 성공(누적)', value: fmtInt(bm.reservationSucceededTotal), hint: '생성된 예약 건수' },
-        { label: '좌석 락 실패(누적)', value: fmtInt(bm.seatLockFailedTotal), hint: '낙관적 락 경합(A/B류)' },
+        { label: '예약 시도(누적)', value: fmtInt(bm.reservationAttemptedTotal), hint: 'reserve 호출' },
+        { label: '예약 성공(누적)', value: fmtInt(bm.reservationSucceededTotal), hint: '생성 예약' },
+        { label: '좌석 락 실패(누적)', value: fmtInt(bm.seatLockFailedTotal), hint: '락 경합' },
         {
           label: '예약 실패·좌석불가(누적)',
           value: fmtInt(bm.reservationFailedSeatNotAvailableTotal),
-          hint: '이미 점유/매진 등',
+          hint: '점유/매진',
         },
-        {
-          label: 'HTTP 요청 처리(누적)',
-          value: fmtInt(bm.httpServerRequestTotal),
-          hint: 'runId 태그 요청(C·인증 GET 포함)',
-        },
+        { label: 'HTTP 요청 처리(누적)', value: fmtInt(bm.httpServerRequestTotal), hint: 'runId HTTP' },
       ]
     case 'E':
     default:
@@ -191,15 +201,33 @@ function KpiCard({
       : 'border-l-slate-400/80 dark:border-l-slate-500'
   return (
     <div
-      className={`rounded-2xl border border-white/20 bg-white/50 p-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-black/35 ${border} border-l-[4px]`}
+      className={`flex h-full min-h-[7.75rem] flex-col rounded-2xl border border-white/20 bg-white/50 p-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-black/35 ${border} border-l-[4px]`}
     >
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+      <div className="min-h-[2.25rem] text-[11px] font-semibold uppercase leading-tight tracking-wide text-neutral-500 line-clamp-2 dark:text-neutral-400">
         {label}
       </div>
-      <div className="mt-1.5 text-3xl font-bold tabular-nums tracking-tight text-neutral-900 dark:text-white">
+      <div className="mt-1.5 shrink-0 text-3xl font-bold tabular-nums tracking-tight text-neutral-900 dark:text-white">
         {value}
       </div>
-      {hint ? <div className="mt-1 text-xs leading-snug text-neutral-500 dark:text-neutral-400">{hint}</div> : null}
+      <div className="mt-auto min-h-[2.25rem] pt-2 text-[10px] leading-snug text-neutral-500 line-clamp-2 dark:text-neutral-400">
+        {hint || '\u00a0'}
+      </div>
+    </div>
+  )
+}
+
+function KpiCardGrid({ count, children }: { count: number; children: ReactNode }) {
+  const cols =
+    count > 3 ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'
+  return <div className={`grid gap-3 ${cols}`}>{children}</div>
+}
+
+function OpsStatusChip({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return (
+    <div
+      className={`rounded-xl border border-white/25 bg-white/40 px-3 py-2 text-xs shadow-sm backdrop-blur dark:border-white/10 dark:bg-black/25 ${className}`}
+    >
+      {children}
     </div>
   )
 }
@@ -247,7 +275,7 @@ export function OpsDashboard() {
   const [threads, setThreads] = useState<number>(50)
   const [eventSeatCount, setEventSeatCount] = useState<number>(96)
   const [testDurationSec, setTestDurationSec] = useState<number>(20)
-  const [sleepMs, setSleepMs] = useState<number>(70_000)
+  const [sleepMs, setSleepMs] = useState<number>(75_000)
   const [crowdMultiplier, setCrowdMultiplier] = useState<number>(10)
   const [actionBusy, setActionBusy] = useState(false)
 
@@ -726,7 +754,9 @@ export function OpsDashboard() {
             nGrinder Controller ↗
           </a>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <select
             className="rounded-xl border border-white/30 bg-white/40 px-3 py-2 text-sm text-neutral-900 outline-none backdrop-blur dark:bg-black/20 dark:text-white"
             value={scenario}
@@ -744,16 +774,6 @@ export function OpsDashboard() {
             <option value="E">Scenario E · Baseline (S×10 crowd)</option>
             <option value="F">Scenario F · Integrated random (A~E mix, 대규모)</option>
           </select>
-          {scenario === 'B' && (
-            <div className="basis-full max-w-[28rem] text-[10px] leading-snug text-neutral-500 dark:text-neutral-400">
-              B는 항상 좌석 1석만 만들며(핫키), 위 좌석 수 입력은 무시됩니다. Ops 시나리오 지표 3개는 락 실패·대기열·입장 순이며, 히트맵은 단일 칸 경쟁만 보입니다.
-            </div>
-          )}
-          {scenario === 'F' && (
-            <div className="basis-full max-w-[28rem] text-[10px] leading-snug text-neutral-500 dark:text-neutral-400">
-              F: A~E 동작을 랜덤 혼합합니다. 기본은 wall-clock testDurationSec(30 미만이면 서버 180초)까지 반복하며, 스크립트는 AVAILABLE 좌석이 없으면 그 전에 조기 종료합니다. 로컬에서는 vusers·좌석·시간을 줄여도 됩니다. 좌석은 vusers보다 작으면 서버가 vusers 이상으로 맞춥니다.
-            </div>
-          )}
           <input
             className="w-[16rem] rounded-xl border border-white/30 bg-white/40 px-3 py-2 text-sm text-neutral-900 outline-none backdrop-blur dark:bg-black/20 dark:text-white"
             value={baseUrl}
@@ -793,37 +813,17 @@ export function OpsDashboard() {
               <div className="text-xs text-neutral-500 dark:text-neutral-400">
                 vusers≈{Math.max(1, Math.floor(eventSeatCount)) * Math.max(1, Math.floor(crowdMultiplier))}
               </div>
-              <div className="basis-full max-w-[24rem] text-[10px] leading-snug text-neutral-500 dark:text-neutral-400">
-                E: vusers/threads는 API에 보내지 않으며, 서버가 vusers≈좌석×배수로 정합니다. Ops에서 로드테스트 이벤트를 고르면 판매/대기열/점유율이 해당 이벤트 기준으로 보입니다.
-              </div>
             </>
           )}
           {(scenario === 'A' || scenario === 'C' || scenario === 'D' || scenario === 'E' || scenario === 'F') && (
-            <div className="flex flex-col gap-0.5">
-              <input
-                className="w-[10rem] rounded-xl border border-white/30 bg-white/40 px-3 py-2 text-sm text-neutral-900 outline-none backdrop-blur dark:bg-black/20 dark:text-white"
-                value={String(eventSeatCount)}
-                onChange={(e) => setEventSeatCount(Number(e.target.value || 0))}
-                placeholder="eventSeatCount"
-                inputMode="numeric"
-                title="eventSeatCount"
-              />
-              {scenario === 'A' && (
-                <span className="max-w-[18rem] text-[10px] leading-tight text-neutral-500 dark:text-neutral-400">
-                  A: VUser당 1석만 예약합니다. 좌석을 vusers 근처로 두면 히트맵에서 경쟁이 잘 보이고, 훨씬 크게 두면 잔여(회색)가 많아져 한눈에 보기 어렵습니다.
-                </span>
-              )}
-              {scenario === 'C' && (
-                <span className="max-w-[18rem] text-[10px] leading-tight text-neutral-500 dark:text-neutral-400">
-                  C: /seats 폴링만 합니다. 좌석 수는 예매 경쟁이 아니라 응답 크기·DB 부하에만 영향을 주므로 24~128 정도가 보기 좋고, 429는 IP/유저당 초당 한도에 따라 올라갑니다.
-                </span>
-              )}
-              {scenario === 'E' && (
-                <span className="max-w-[18rem] text-[10px] leading-tight text-neutral-500 dark:text-neutral-400">
-                  E: 좌석×배수가 커질수록 nGrinder VUser가 같이 커집니다. 히트맵·부하를 맞추려면 먼저 좌석 수를 정한 뒤 배수를 조절하세요.
-                </span>
-              )}
-            </div>
+            <input
+              className="w-[10rem] rounded-xl border border-white/30 bg-white/40 px-3 py-2 text-sm text-neutral-900 outline-none backdrop-blur dark:bg-black/20 dark:text-white"
+              value={String(eventSeatCount)}
+              onChange={(e) => setEventSeatCount(Number(e.target.value || 0))}
+              placeholder="eventSeatCount"
+              inputMode="numeric"
+              title="eventSeatCount"
+            />
           )}
           {(scenario === 'A' || scenario === 'C' || scenario === 'F') && (
             <input
@@ -836,68 +836,90 @@ export function OpsDashboard() {
             />
           )}
           {scenario === 'D' && (
-            <div className="flex flex-col gap-0.5">
-              <input
-                className="w-[10rem] rounded-xl border border-white/30 bg-white/40 px-3 py-2 text-sm text-neutral-900 outline-none backdrop-blur dark:bg-black/20 dark:text-white"
-                value={String(sleepMs)}
-                onChange={(e) => setSleepMs(Number(e.target.value || 0))}
-                placeholder="sleepMs"
-                inputMode="numeric"
-                title="sleepMs"
-              />
-              <span className="max-w-[22rem] text-[10px] leading-snug text-neutral-500 dark:text-neutral-400">
-                D: 예약 hold TTL은 서버 설정(기본 10분)입니다. 만료·결제 요청 카운터를 보려면 sleepMs를 TTL보다 길게 두세요. 좌석 수는 vusers보다 작으면 서버가 vusers로 맞춥니다(핫키보다 TTL 검증에 유리).
-              </span>
-            </div>
+            <input
+              className="w-[10rem] rounded-xl border border-white/30 bg-white/40 px-3 py-2 text-sm text-neutral-900 outline-none backdrop-blur dark:bg-black/20 dark:text-white"
+              value={String(sleepMs)}
+              onChange={(e) => setSleepMs(Number(e.target.value || 0))}
+              placeholder="sleepMs"
+              inputMode="numeric"
+              title="sleepMs"
+            />
           )}
-          <button
-            type="button"
-            className="rounded-xl bg-indigo-600/90 px-4 py-2 text-sm font-medium text-white shadow disabled:opacity-50"
-            onClick={() => void startNgrinder()}
-            disabled={actionBusy || (scenario !== 'E' && (vusers < 1 || threads < 1))}
-          >
-            실행
-          </button>
-          <button
-            type="button"
-            className="rounded-xl bg-red-600/85 px-4 py-2 text-sm font-medium text-white shadow disabled:opacity-50"
-            onClick={() => void stopNgrinder()}
-            disabled={actionBusy || !testId}
-          >
-            중지
-          </button>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className={`rounded-full px-2 py-0.5 font-semibold ${statusTone.bg} ${statusTone.fg}`}>
-              {statusTone.label}
-            </span>
-            <span className="text-neutral-500 dark:text-neutral-400">testId={testId ?? '—'}</span>
-            {testRunId && (
-              <span className="text-neutral-500 dark:text-neutral-400" title={`전체 runId: ${testRunId}`}>
-                runId=<span className="font-mono">{testRunId.slice(0, 8)}</span>
-              </span>
-            )}
-            {testRunId && (
-              <a
-                className="text-xs font-medium text-[#007AFF] hover:underline"
-                href={grafanaExploreRunIdUrl(testRunId)}
-                target="_blank"
-                rel="noreferrer"
+            </div>
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                className="rounded-xl bg-indigo-600/90 px-4 py-2 text-sm font-medium text-white shadow disabled:opacity-50"
+                onClick={() => void startNgrinder()}
+                disabled={actionBusy || (scenario !== 'E' && (vusers < 1 || threads < 1))}
               >
-                logs ↗
-              </a>
+                실행
+              </button>
+              <button
+                type="button"
+                className="rounded-xl bg-red-600/85 px-4 py-2 text-sm font-medium text-white shadow disabled:opacity-50"
+                onClick={() => void stopNgrinder()}
+                disabled={actionBusy || !testId}
+              >
+                중지
+              </button>
+            </div>
+          </div>
+
+          <p className="rounded-xl border border-white/20 bg-white/5 px-3 py-2 text-[11px] leading-relaxed text-neutral-600 dark:border-white/10 dark:bg-black/10 dark:text-neutral-300">
+            <span className="font-semibold text-neutral-700 dark:text-neutral-200">시나리오 {scenario}</span>
+            <span className="text-neutral-400 dark:text-neutral-500"> · </span>
+            {scenarioLoadTestHint(scenario)}
+          </p>
+
+          <div className="flex flex-wrap items-stretch gap-2">
+            <OpsStatusChip>
+              <span className={`rounded-full px-2 py-0.5 font-semibold ${statusTone.bg} ${statusTone.fg}`}>
+                {statusTone.label}
+              </span>
+            </OpsStatusChip>
+            <OpsStatusChip>
+              <span className="text-neutral-500 dark:text-neutral-400">testId={testId ?? '—'}</span>
+            </OpsStatusChip>
+            {testRunId && (
+              <OpsStatusChip>
+                <span className="text-neutral-500 dark:text-neutral-400" title={`전체 runId: ${testRunId}`}>
+                  runId=<span className="font-mono">{testRunId.slice(0, 8)}</span>
+                </span>
+              </OpsStatusChip>
             )}
-            <span className="text-neutral-500 dark:text-neutral-400">paymentRequested(total)={paymentRequestedDelta ?? '—'}</span>
+            {testRunId && (
+              <OpsStatusChip>
+                <a
+                  className="font-medium text-[#007AFF] hover:underline"
+                  href={grafanaExploreRunIdUrl(testRunId)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  logs ↗
+                </a>
+              </OpsStatusChip>
+            )}
+            <OpsStatusChip>
+              <span className="text-neutral-500 dark:text-neutral-400">
+                paymentRequested(total)={paymentRequestedDelta ?? '—'}
+              </span>
+            </OpsStatusChip>
             {queueEnteredDelta != null && (
-              <span className="text-neutral-500 dark:text-neutral-400">joinQueue(Δ)={queueEnteredDelta}</span>
+              <OpsStatusChip>
+                <span className="text-neutral-500 dark:text-neutral-400">joinQueue(Δ)={queueEnteredDelta}</span>
+              </OpsStatusChip>
             )}
             {aGoal && aGoal.value != null && aGoal.target != null && (
-              <span className={aGoalReached ? 'text-emerald-700 dark:text-emerald-300' : 'text-neutral-500 dark:text-neutral-400'}>
-                {aGoal.label}: {aGoal.value}/{aGoal.target} {aGoalReached ? '(달성)' : ''}
-              </span>
+              <OpsStatusChip>
+                <span className={aGoalReached ? 'text-emerald-700 dark:text-emerald-300' : 'text-neutral-500 dark:text-neutral-400'}>
+                  {aGoal.label}: {aGoal.value}/{aGoal.target} {aGoalReached ? '(달성)' : ''}
+                </span>
+              </OpsStatusChip>
             )}
           </div>
           {aGoalPct != null && (
-            <div className="mt-2 w-full max-w-[36rem]">
+            <div className="w-full max-w-[36rem]">
               <div className="h-2 w-full overflow-hidden rounded-full bg-white/20 dark:bg-white/10">
                 <div
                   className={aGoalReached ? 'h-2 bg-emerald-500/80' : 'h-2 bg-indigo-500/80'}
@@ -908,7 +930,7 @@ export function OpsDashboard() {
           )}
         </div>
 
-        <div className="mt-4 space-y-4">
+        <div className="mt-3 space-y-3">
           <div>
             <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
               <span>공통 · 결제 파이프라인</span>
@@ -925,7 +947,7 @@ export function OpsDashboard() {
                 </span>
               ) : null}
             </div>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <KpiCardGrid count={3}>
               <KpiCard
                 label={paymentDelta ? '결제 성공(이번 테스트 Δ)' : '결제 성공(누적)'}
                 value={fmtInt(paymentDelta ? paymentDelta.ok : bizSnapshot?.paymentSucceededTotal)}
@@ -952,41 +974,7 @@ export function OpsDashboard() {
                 hint={paymentDelta ? 'DB PROCESSING(전역·스냅샷)' : 'DB PROCESSING 건수(전역)'}
                 accent="indigo"
               />
-            </div>
-            <div className="mt-3 rounded-2xl border border-white/15 bg-white/20 px-3 py-2.5 text-xs leading-relaxed text-neutral-700 dark:border-white/10 dark:bg-black/25 dark:text-neutral-300">
-              <div className="font-semibold text-neutral-800 dark:text-neutral-200">결제 요청과 성공/실패가 다른 이유</div>
-              <ul className="mt-1.5 list-inside list-disc space-y-1 text-[11px]">
-                <li>
-                  <span className="font-medium">의미가 다릅니다.</span> 요청(누적)은 결제 워커 큐로 넘긴 횟수이고, 성공/실패는{' '}
-                  <span className="font-medium">정산이 끝난 뒤</span>에만 올라갑니다. 그 사이에 큐·DB 처리중·드롭·중복
-                  스킵이 있으면 숫자가 어긋날 수 있습니다.
-                </li>
-                <li>
-                  백엔드가 노출하는{' '}
-                  <span className="font-mono text-[10px]">paymentRequestedMismatch</span>는 요청과 (성공+실패+처리중+
-                  큐+드롭+중복스킵)의 차이입니다. 정상이면 0 근처입니다. 지금:{' '}
-                  <span className="font-mono font-semibold">
-                    {fmtNum1(bizSnapshot?.paymentRequestedMismatch ?? null)}
-                  </span>
-                  , WIP(카운터):{' '}
-                  <span className="font-mono font-semibold">
-                    {fmtNum1(bizSnapshot?.paymentWipFromCounters ?? null)}
-                  </span>
-                  , 드롭/중복:{' '}
-                  <span className="font-mono">
-                    {fmtInt(bizSnapshot?.paymentDroppedMissingReservationTotal)}/
-                    {fmtInt(bizSnapshot?.paymentSkippedDuplicateTotal)}
-                  </span>
-                </li>
-                <li>
-                  <span className="font-medium">성공(누적)이 줄어들어 보였다면</span> 보통은 코드 버그라기보다{' '}
-                  <span className="font-medium">프로세스 재시작·재배포</span>로 Micrometer가 0부터 다시 시작했거나,{' '}
-                  <span className="font-medium">여러 백엔드 인스턴스</span>를 번갈아 조회해 한 인스턴스의 낮은 값을 본 경우,
-                  또는 <span className="font-medium">Grafana rate()/increase()</span>가 카운터 리셋 구간에서 음수로 튀는
-                  현상입니다. API는 동일 이름 Counter를 모두 합산해 읽도록 맞춰 두었습니다.
-                </li>
-              </ul>
-            </div>
+            </KpiCardGrid>
           </div>
           <div>
             <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
@@ -1001,18 +989,18 @@ export function OpsDashboard() {
                   (C: 인증된 GET /seats만 반복 — 공통 결제 카운터는 거의 안 움직일 수 있습니다)
                 </span>
               ) : null}
-              {scenario === 'F' ? (
-                <span className="ml-2 block max-w-[40rem] font-normal normal-case text-neutral-500 dark:text-neutral-400">
-                  F는 A~E가 섞여 한 지표만으로는 요약이 잘 안 됩니다. 아래는 큐→입장→예약(시도/성공/락·불가)→HTTP 흐름입니다. 429·레이트리밋은 Grafana
-                  Scenarios 대시보드나 비즈니스 API의 <span className="font-mono text-[10px]">rateLimitRejectedTotal</span>을 보세요.
-                </span>
-              ) : null}
             </div>
-            <div className="grid gap-3 sm:grid-cols-3">
+            {scenario === 'F' ? (
+              <p className="mb-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">
+                큐→입장→예약→HTTP 흐름 순입니다. 429·레이트리밋은 Grafana Scenarios 또는{' '}
+                <span className="font-mono text-[10px]">rateLimitRejectedTotal</span>을 보세요.
+              </p>
+            ) : null}
+            <KpiCardGrid count={loadTestExtraKpis.length}>
               {loadTestExtraKpis.map((k) => (
                 <KpiCard key={k.label} label={k.label} value={k.value} hint={k.hint} accent="slate" />
               ))}
-            </div>
+            </KpiCardGrid>
           </div>
         </div>
 

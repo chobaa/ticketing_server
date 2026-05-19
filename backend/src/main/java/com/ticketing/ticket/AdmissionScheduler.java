@@ -21,6 +21,7 @@ public class AdmissionScheduler {
     private final EventRepository eventRepository;
     private final QueueService queueService;
     private final com.ticketing.metrics.BusinessMetrics businessMetrics;
+    private final com.ticketing.metrics.LoadTestRunAttributionService loadTestRunAttribution;
 
     @Value("${ticketing.queue.admission-batch-size}")
     private int batchSize;
@@ -50,7 +51,8 @@ public class AdmissionScheduler {
                 }
                 queueService.removeFromQueue(eventId, userId);
                 String token = queueService.issueAdmissionToken(eventId, userId);
-                businessMetrics.incAdmissionIssued();
+                String runId = loadTestRunAttribution.resolve(eventId, userId);
+                businessMetrics.incAdmissionIssued(runId);
                 log.debug("Admitted user {} to event {} token={}", userId, eventId, token);
             } catch (Exception e) {
                 log.warn("Admission failed for {}: {}", userIdStr, e.getMessage());

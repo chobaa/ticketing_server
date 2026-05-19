@@ -35,6 +35,7 @@ public class ReservationService {
     private final PaymentRepository paymentRepository;
     private final ReservationSettlementService reservationSettlementService;
     private final com.ticketing.metrics.BusinessMetrics businessMetrics;
+    private final com.ticketing.metrics.LoadTestRunAttributionService loadTestRunAttribution;
 
     private final Timer reserveTimer;
     private final Timer lockAcquireTimer;
@@ -52,6 +53,7 @@ public class ReservationService {
             PaymentRepository paymentRepository,
             ReservationSettlementService reservationSettlementService,
             com.ticketing.metrics.BusinessMetrics businessMetrics,
+            com.ticketing.metrics.LoadTestRunAttributionService loadTestRunAttribution,
             MeterRegistry meterRegistry) {
         this.redissonClient = redissonClient;
         this.seatRepository = seatRepository;
@@ -62,6 +64,7 @@ public class ReservationService {
         this.paymentRepository = paymentRepository;
         this.reservationSettlementService = reservationSettlementService;
         this.businessMetrics = businessMetrics;
+        this.loadTestRunAttribution = loadTestRunAttribution;
         this.reserveTimer =
                 Timer.builder("ticketing.reservation.reserve")
                         .description("Reservation (seat hold) end-to-end latency inside service")
@@ -108,7 +111,11 @@ public class ReservationService {
             seatRepository.save(seat);
             seatViewCacheService.invalidate(eventId);
 
-            Instant expiresAt = Instant.now().plus(holdTtlMinutes, ChronoUnit.MINUTES);
+            Integer holdTtlSeconds = loadTestRunAttribution.resolveHoldTtlSeconds(eventId, userId);
+            Instant expiresAt =
+                    holdTtlSeconds != null
+                            ? Instant.now().plus(holdTtlSeconds, ChronoUnit.SECONDS)
+                            : Instant.now().plus(holdTtlMinutes, ChronoUnit.MINUTES);
             Reservation r =
                     Reservation.builder()
                             .userId(userId)

@@ -8,8 +8,13 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+
+import com.ticketing.logging.RequestDebugContextFilter;
+import com.ticketing.metrics.LoadTestRunAttributionService;
+import com.ticketing.metrics.LoadTestRunProfile;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -20,12 +25,17 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final RateLimitProperties props;
     private final RateLimitService service;
     private final com.ticketing.metrics.BusinessMetrics businessMetrics;
+    private final LoadTestRunAttributionService loadTestRunAttribution;
 
     public RateLimitFilter(
-            RateLimitProperties props, RateLimitService service, com.ticketing.metrics.BusinessMetrics businessMetrics) {
+            RateLimitProperties props,
+            RateLimitService service,
+            com.ticketing.metrics.BusinessMetrics businessMetrics,
+            LoadTestRunAttributionService loadTestRunAttribution) {
         this.props = props;
         this.service = service;
         this.businessMetrics = businessMetrics;
+        this.loadTestRunAttribution = loadTestRunAttribution;
     }
 
     @Override
@@ -46,6 +56,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         long now = System.currentTimeMillis();
         String path = request.getRequestURI();
+        LoadTestRunProfile runProfile = resolveRunProfile(request);
 
         String ip = clientIp(request);
         if (ip != null && !ip.isBlank()) {
@@ -55,11 +66,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
             boolean authBootstrap =
                     "POST".equalsIgnoreCase(request.getMethod())
                             && (path.endsWith("/api/auth/register") || path.endsWith("/api/auth/login"));
-            long ipWindow = props.ip().windowMs();
+            long ipWindow =
+                    runProfile != null && runProfile.rateLimitIpWindowMs() != null
+                            ? runProfile.rateLimitIpWindowMs()
+                            : props.ip().windowMs();
             int ipBudget =
                     authBootstrap
                             ? Math.max(5_000, Math.min(100_000, props.ip().requests() * 500))
-                            : props.ip().requests();
+                            : runProfile != null && runProfile.rateLimitIpRequests() != null
+                                    ? runProfile.rateLimitIpRequests()
+                                    : props.ip().requests();
             String ipKey = authBootstrap ? ("rl:ip:auth:{" + ip + "}") : ("rl:ip:{" + ip + "}");
             RateLimitResult ipRes = service.check(ipKey, now, ipWindow, ipBudget);
             if (!ipRes.allowed()) {
@@ -71,11 +87,19 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         Long userId = authenticatedUserId();
         if (userId != null) {
+            long userWindow =
+                    runProfile != null && runProfile.rateLimitUserWindowMs() != null
+                            ? runProfile.rateLimitUserWindowMs()
+                            : props.user().windowMs();
+            int userBudget =
+                    runProfile != null && runProfile.rateLimitUserRequests() != null
+                            ? runProfile.rateLimitUserRequests()
+                            : props.user().requests();
             RateLimitResult userRes = service.check(
                     "rl:user:{" + userId + "}",
                     now,
-                    props.user().windowMs(),
-                    props.user().requests());
+                    userWindow,
+                    userBudget);
             if (!userRes.allowed()) {
                 businessMetrics.incRateLimitRejected("user");
                 reject(response, userRes.retryAfterMs());
@@ -84,6 +108,21 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private LoadTestRunProfile resolveRunProfile(HttpServletRequest request) {
+        String runId = request.getHeader(RequestDebugContextFilter.HEADER_RUN_ID);
+        if (runId == null || runId.isBlank()) {
+            runId = MDC.get("runId");
+        }
+        if (runId == null || runId.isBlank()) {
+            return null;
+        }
+        LoadTestRunProfile profile = loadTestRunAttribution.resolveProfile(runId.trim());
+        if (profile == null || !profile.hasRateLimitOverride()) {
+            return null;
+        }
+        return profile;
     }
 
     private static Long authenticatedUserId() {

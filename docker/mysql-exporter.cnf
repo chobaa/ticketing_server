@@ -1,0 +1,5 @@
+[client]
+user=ticketing
+password=ticketing
+host=mysql
+port=3306

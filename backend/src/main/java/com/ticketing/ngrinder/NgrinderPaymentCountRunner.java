@@ -2,6 +2,7 @@ package com.ticketing.ngrinder;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.ticketing.metrics.ClusterBusinessMetricsBridge;
+import com.ticketing.metrics.RunScopedMetricsStore;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,7 @@ public class NgrinderPaymentCountRunner {
     private final MeterRegistry meterRegistry;
     private final NgrinderClient ngrinderClient;
     private final ClusterBusinessMetricsBridge clusterCounters;
+    private final RunScopedMetricsStore runScopedMetrics;
 
     /**
      * Safety stop: if the app's settled delta reaches target (and inflight becomes 0),
@@ -156,6 +158,78 @@ public class NgrinderPaymentCountRunner {
                 log.warn("RequestedStopRunner failed for testId={}: {}", testId, e.getMessage());
             }
         });
+    }
+
+    /**
+     * Scenario D: stop once run-scoped {@code reservationExpiredTotal} reaches the target (successful reserves).
+     */
+    public void stopWhenRunReservationExpiredReached(
+            long testId, String runId, long targetExpiredDelta, long timeoutMs) {
+        if (runId == null || runId.isBlank() || targetExpiredDelta < 1) {
+            return;
+        }
+        final String rid = runId.trim();
+        final long target = targetExpiredDelta;
+        final long timeout = Math.max(timeoutMs, 5_000L);
+        final long startedAt = System.currentTimeMillis();
+        final long baseline = runScopedExpiredTotal(rid);
+
+        Thread.startVirtualThread(() -> {
+            try {
+                while (true) {
+                    long elapsed = System.currentTimeMillis() - startedAt;
+                    if (elapsed >= timeout) {
+                        log.warn(
+                                "Stopping nGrinder testId={} due to reservationExpiredStop timeout: elapsedMs={}",
+                                testId,
+                                elapsed);
+                        safeStop(testId);
+                        return;
+                    }
+
+                    try {
+                        JsonNode st = ngrinderClient.getStatus(testId);
+                        String name = st == null ? null : st.path("status").path("name").asText(null);
+                        if (name != null
+                                && (name.equalsIgnoreCase("FINISHED")
+                                        || name.equalsIgnoreCase("STOPPED")
+                                        || name.equalsIgnoreCase("CANCELED"))) {
+                            log.info("Stop monitoring reservationExpiredStop testId={} because status={}", testId, name);
+                            return;
+                        }
+                    } catch (Exception ignored) {
+                        // ignore status polling errors
+                    }
+
+                    long delta = Math.max(0, runScopedExpiredTotal(rid) - baseline);
+                    if (delta >= target) {
+                        log.info(
+                                "Stopping nGrinder testId={} because reservationExpired delta reached: delta={} target={} runId={}",
+                                testId,
+                                delta,
+                                target,
+                                rid);
+                        safeStop(testId);
+                        return;
+                    }
+
+                    Thread.sleep(1_000);
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            } catch (Exception e) {
+                log.warn("ReservationExpiredStopRunner failed for testId={}: {}", testId, e.getMessage());
+            }
+        });
+    }
+
+    private long runScopedExpiredTotal(String runId) {
+        var snap = runScopedMetrics.snapshot(runId);
+        Object v = snap.get("reservationExpiredTotal");
+        if (v instanceof Number n) {
+            return n.longValue();
+        }
+        return 0L;
     }
 
     public void stopOnTimeout(long testId, long timeoutMs) {

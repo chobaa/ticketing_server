@@ -47,7 +47,7 @@ function Invoke-Scenario {
 Invoke-Scenario 'A' 22 ($base + '/api/dashboard/ngrinder/scenarios/start?scenario=A&vusers=18&threads=18&eventSeatCount=56&testDurationSec=14')
 Invoke-Scenario 'B' 38 ($base + '/api/dashboard/ngrinder/scenarios/start?scenario=B&vusers=15&threads=15')
 Invoke-Scenario 'C' 22 ($base + '/api/dashboard/ngrinder/scenarios/start?scenario=C&vusers=14&threads=14&eventSeatCount=56&testDurationSec=14')
-Invoke-Scenario 'D' 16 ($base + '/api/dashboard/ngrinder/scenarios/start?scenario=D&vusers=8&threads=8&eventSeatCount=40&sleepMs=6000')
+Invoke-Scenario 'D' 16 ($base + '/api/dashboard/ngrinder/scenarios/start?scenario=D&vusers=8&threads=8&eventSeatCount=40&holdTtlSeconds=60&sleepMs=75000')
 Invoke-Scenario 'E' 50 ($base + '/api/dashboard/ngrinder/scenarios/start?scenario=E&eventSeatCount=20&crowdMultiplier=4')
 Invoke-Scenario 'F' 42 ($base + '/api/dashboard/ngrinder/scenarios/start?scenario=F&vusers=12&threads=12&eventSeatCount=48&testDurationSec=35')
 

@@ -161,13 +161,12 @@ class ScenarioDZombieTtl {
             return
         }
 
-        int sleepMs = paramInt("sleepMs", "70000")
+        int holdTtlSec = paramInt("holdTtlSeconds", "60")
+        if (holdTtlSec < 1) holdTtlSec = 60
+        int defaultSleepMs = holdTtlSec * 1000 + 15_000
+        int sleepMs = paramInt("sleepMs", String.valueOf(defaultSleepMs))
         if (sleepMs < 0) sleepMs = 0
-        try {
-            Thread.sleep(sleepMs)
-        } catch (InterruptedException ignored) {
-            Thread.currentThread().interrupt()
-        }
+        waitForSeatReleasedAfterTtl(chosenSeatId, holdTtlSec, sleepMs)
 
         // After TTL expiry, seat should be AVAILABLE again (requires reservation expiry scheduler enabled).
         verifySeatAvailable(chosenSeatId)
@@ -307,8 +306,38 @@ class ScenarioDZombieTtl {
         return true
     }
 
+    /** Poll until TTL+scheduler margin or sleep budget; exit early when seat is AVAILABLE. */
+    private void waitForSeatReleasedAfterTtl(long seatId, int holdTtlSec, int sleepMs) {
+        long deadline = System.currentTimeMillis() + sleepMs
+        long readyAfter = System.currentTimeMillis() + (holdTtlSec + 8L) * 1000L
+        while (System.currentTimeMillis() < deadline) {
+            if (System.currentTimeMillis() >= readyAfter && isSeatAvailable(seatId)) {
+                grinder.logger.info("D early exit: seat AVAILABLE after holdTtlSec={}", holdTtlSec)
+                return
+            }
+            try {
+                Thread.sleep(1000)
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt()
+                return
+            }
+        }
+    }
+
+    private boolean isSeatAvailable(long seatId) {
+        String url = baseUrl + "/api/events/" + eventId + "/seats?refresh=true"
+        HTTPResponse resp = requestSeatCheck.GET(url)
+        if (resp.getStatusCode() != 200) {
+            return false
+        }
+        def seatList = new JsonSlurper().parseText(resp.getBodyText()) as List
+        def seat = seatList.find { (it.id as long) == seatId }
+        if (seat == null) return false
+        return "AVAILABLE".equalsIgnoreCase(seat.status as String)
+    }
+
     private void verifySeatAvailable(long seatId) {
-        String url = baseUrl + "/api/events/" + eventId + "/seats"
+        String url = baseUrl + "/api/events/" + eventId + "/seats?refresh=true"
         HTTPResponse resp = requestSeatCheck.GET(url)
         if (resp.getStatusCode() != 200) {
             throw new IllegalStateException("seat list failed: status=" + resp.getStatusCode() + " body=" + resp.getBodyText())

@@ -340,8 +340,10 @@ services:
   loki:
     image: grafana/loki:3.4.2
     command: ["-config.file=/etc/loki/config.yml"]
+    # Host 3100 is often blocked on Windows (Hyper-V excluded range 3013–3112).
+    # Grafana/promtail use http://loki:3100 on the Docker network; host mapping is optional.
     ports:
-      - "3100:3100"
+      - "13100:3100"
     volumes:
       - ./docker/loki/loki.yml:/etc/loki/config.yml:ro
       - loki_data:/loki
@@ -436,9 +438,9 @@ services:
 
   mysqld-exporter:
     image: prom/mysqld-exporter:v0.17.2
-    environment:
-      # Format: user:password@(host:port)/
-      DATA_SOURCE_NAME: ticketing:ticketing@(mysql:3306)/
+    command: ["--config.my-cnf=/.my.cnf"]
+    volumes:
+      - ./docker/mysql-exporter.cnf:/.my.cnf:ro
     depends_on:
       mysql:
         condition: service_healthy

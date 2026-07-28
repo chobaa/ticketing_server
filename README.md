@@ -71,34 +71,15 @@
 
 ```mermaid
 flowchart TB
-  subgraph client [Client Layer]
-    Browser[Browser / nGrinder Agent]
-  end
-  subgraph edge [Edge Layer]
-    Nginx[nginx - static + reverse proxy]
-  end
-  subgraph app [Application Layer]
-    API[Spring Boot API\nJWT + RateLimit + Domain]
-  end
-  subgraph data [Data & Messaging Layer]
-    MySQL[(MySQL - source of truth)]
-    Redis[(Redis Cluster - queue / lock / rate limit)]
-    Kafka[Kafka - domain events]
-    Rabbit[RabbitMQ - work queues]
-  end
-  subgraph observe [Observability Layer]
-    Prom[Prometheus]
-    Graf[Grafana]
-  end
-  Browser --> Nginx --> API
-  API --> MySQL
-  API --> Redis
-  API --> Kafka
-  Kafka --> API
-  API --> Rabbit
-  Rabbit --> API
-  API --> Prom
-  Prom --> Graf
+  C["Client<br/>(Browser)"] --> N["Nginx (frontend container)<br/>- static / api proxy"]
+  N --> B["Spring Boot Backend<br/>(monolith)<br/>- JWT auth / RateLimitFilter<br/>- Queue / Reservation<br/>- Kafka + RMQ consumers"]
+
+  B <--> R["Redis (single)<br/>- Queue(ZSET)<br/>- Rate limit keys"]
+  B <--> DB[("MySQL")]
+  B <--> K["Kafka"]
+  B <--> RMQ["RabbitMQ"]
+
+  P["Prometheus"] --> B
 ```
 
 ### 전체 트래픽 흐름

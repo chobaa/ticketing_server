@@ -27,7 +27,7 @@ jobs:
           cache: maven
 
       - name: Test
-        run: ./mvnw -q test
+        run: chmod +x mvnw && ./mvnw -q test
 
   frontend:
     name: Frontend (Node)
@@ -81,9 +81,23 @@ jobs:
       - name: Smoke endpoints
         run: |
           set -euo pipefail
-          curl -fsS "http://localhost:9090/-/ready" >/dev/null
-          curl -fsS "http://localhost:3000/api/health" >/dev/null
-          curl -fsS "http://localhost:8080/api/dashboard/status" >/dev/null
+          wait_url() {
+            local url="$1"
+            local name="$2"
+            for i in $(seq 1 30); do
+              if curl -fsS "$url" >/dev/null; then
+                echo "$name ok"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "$name timeout: $url"
+            docker compose ps
+            return 1
+          }
+          wait_url "http://localhost:9090/-/ready" "prometheus"
+          wait_url "http://localhost:3000/api/health" "grafana"
+          wait_url "http://localhost:8080/api/dashboard/status" "dashboard status"
 
       - name: Shutdown
         if: always()
